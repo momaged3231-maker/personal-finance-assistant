@@ -1,0 +1,192 @@
+export interface Account {
+  id: number;
+  user_id?: number;
+  name: string;
+  opening_balance: number; // in piastres
+  balance: number; // calculated in piastres
+  created_at: string;
+}
+
+export interface Transaction {
+  id: number;
+  user_id?: number;
+  type: "income" | "expense" | "transfer";
+  amount: number; // in piastres
+  description: string;
+  category: string;
+  account_id: number;
+  account_name?: string;
+  to_account_id?: number | null;
+  to_account_name?: string | null;
+  date: string; // YYYY-MM-DD
+  created_at: string;
+}
+
+export interface DailySummary {
+  date: string;
+  income: number; // piastres
+  expense: number; // piastres
+  net: number; // piastres
+  transferCount: number;
+  transactionsCount: number;
+}
+
+export interface MonthlySummary {
+  month: string;
+  income: number;
+  expense: number;
+  net: number;
+  maintenanceIncome: number;
+  salaryIncome: number;
+  otherIncome: number;
+}
+
+export interface ParsedAction {
+  type: "expense" | "income" | "transfer";
+  amount: number; // in piastres
+  amountEgp: number;
+  description: string;
+  category: string;
+  accountId: number;
+  accountName: string;
+  toAccountId?: number;
+  toAccountName?: string;
+  requiresConfirmation: boolean;
+  confirmationMessage: string;
+}
+
+export interface UserRecord {
+  id: number;
+  name: string;
+  email: string;
+  password?: string;
+  phone?: string;
+  plan: "free" | "monthly" | "semi-annual" | "annual" | "lifetime";
+  status: "active" | "expired" | "pending" | "suspended";
+  is_admin?: boolean | number;
+  expires_at?: string;
+  device_id?: string;
+  is_blocked: number;
+  created_at: string;
+}
+
+export interface BlockedDeviceRecord {
+  id: number;
+  device_id: string;
+  ip_address?: string;
+  reason?: string;
+  blocked_at: string;
+}
+
+export interface LiveVisitorRecord {
+  session_id: string;
+  ip_address?: string;
+  device_info?: string;
+  page?: string;
+  last_active_at: string;
+}
+
+export interface DebtItem {
+  id: number;
+  user_id?: number;
+  type: "gam_eya" | "i_owe" | "owed_to_me";
+  title: string;
+  person_name?: string;
+  amount: number; // in piastres
+  paid_amount: number; // in piastres
+  due_date?: string;
+  status: "pending" | "paid";
+  created_at: string;
+}
+
+export interface SavingsGoalItem {
+  id: number;
+  user_id?: number;
+  title: string;
+  target_amount: number; // in piastres
+  current_amount: number; // in piastres
+  target_date?: string;
+  icon?: string;
+  created_at: string;
+}
+
+export interface CategoryBudgetItem {
+  category: string;
+  user_id?: number;
+  monthly_limit: number; // in piastres
+  spent_amount: number; // in piastres
+  percentage: number;
+  is_warning: boolean;
+  is_exceeded: boolean;
+}
+
+export interface SmartParsedNotification {
+  type: "income" | "expense" | "transfer";
+  amount: number; // in piastres
+  amountEgp: number;
+  description: string;
+  category: string;
+  accountName: string;
+  sourceText: string;
+}
+
+export interface AssistantResponse {
+  text: string;
+  action?: ParsedAction;
+  data?: Record<string, unknown>;
+}
+
+// Convert EGP to Piastres (safe integer)
+export function egpToPiastres(egp: number | string): number {
+  const num = typeof egp === "string" ? parseFloat(egp) : egp;
+  if (isNaN(num)) return 0;
+  return Math.round(num * 100);
+}
+
+// Convert Piastres to EGP
+export function piastresToEgp(piastres: number): number {
+  return (piastres || 0) / 100;
+}
+
+// Format EGP display
+export function formatEgp(piastres: number, withSymbol = true): string {
+  const egp = piastresToEgp(piastres);
+  const formatted = new Intl.NumberFormat("ar-EG", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(egp);
+  return withSymbol ? `${formatted} ج.م` : formatted;
+}
+
+// General commission formula: (grossAmount - deduction) * userCutPercent
+export function calculateCommission(
+  grossAmount: number,
+  deductionPercent = 10,
+  userCutPercent = 50
+) {
+  const shopDeduction = grossAmount * (deductionPercent / 100);
+  const netLabor = grossAmount - shopDeduction;
+  const userCommission = netLabor * (userCutPercent / 100);
+  return {
+    grossAmount,
+    deductionAmount: Math.round(shopDeduction * 100) / 100,
+    netAmount: Math.round(netLabor * 100) / 100,
+    userCommission: Math.round(userCommission * 100) / 100,
+    // Aliases for full backward compatibility
+    grossLabor: grossAmount,
+    shopDeduction: Math.round(shopDeduction * 100) / 100,
+    netLabor: Math.round(netLabor * 100) / 100,
+  };
+}
+
+// Backward compatibility alias
+export const calculateMaintenanceCommission = calculateCommission;
+
+// Get today's local date in YYYY-MM-DD
+export function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
