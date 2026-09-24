@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Cloud,
   CheckCircle2,
+  Zap,
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
 
@@ -72,6 +73,12 @@ export default function SettingsPage() {
   const [aiModel, setAiModel] = useState("openrouter/auto");
   const [importedModels, setImportedModels] = useState<string[]>([]);
   const [importingModels, setImportingModels] = useState(false);
+  const [testingModel, setTestingModel] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+    detail?: string;
+  } | null>(null);
 
   // Accounts & Categories
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -213,6 +220,43 @@ export default function SettingsPage() {
       notify(e instanceof Error ? e.message : "فشل استيراد الموديلات", "error");
     } finally {
       setImportingModels(false);
+    }
+  }
+
+  // Test the currently typed AI config with a real API call
+  async function handleTestModel() {
+    if (!openAiKey.trim()) {
+      setTestResult({ ok: false, message: "اكتب مفتاح API الأول عشان نقدر نختبر الموديل." });
+      return;
+    }
+    if (!aiModel.trim()) {
+      setTestResult({ ok: false, message: "اكتب اسم الموديل الأول." });
+      return;
+    }
+
+    setTestingModel(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: aiProvider,
+          baseUrl: aiBaseUrl,
+          apiKey: openAiKey,
+          model: aiModel,
+        }),
+      });
+      const json = await res.json();
+      setTestResult({
+        ok: Boolean(json.ok),
+        message: json.message || "انتهى الاختبار",
+        detail: json.detail,
+      });
+    } catch {
+      setTestResult({ ok: false, message: "حصل خطأ أثناء محاولة الاختبار." });
+    } finally {
+      setTestingModel(false);
     }
   }
 
@@ -996,6 +1040,50 @@ export default function SettingsPage() {
                     {m}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Test Model Connection */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleTestModel}
+                disabled={testingModel}
+                className="py-2 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 text-emerald-300 text-xs font-bold flex items-center gap-2 border border-emerald-500/30 transition"
+              >
+                {testingModel ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : testResult?.ok ? (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5" />
+                )}
+                {testingModel ? "جاري اختبار الاتصال..." : "اختبار الموديل (صحة الاتصال)"}
+              </button>
+            </div>
+
+            {testResult && (
+              <div
+                className={`mt-2 px-3.5 py-2.5 rounded-xl border text-xs leading-relaxed ${
+                  testResult.ok
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                    : "bg-rose-500/10 border-rose-500/30 text-rose-200"
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  {testResult.ok ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                  )}
+                  <div>
+                    <p>{testResult.message}</p>
+                    {testResult.detail && (
+                      <p className="mt-1 font-mono text-[10px] opacity-70 break-all" dir="ltr">
+                        {testResult.detail}
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

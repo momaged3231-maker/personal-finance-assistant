@@ -9,6 +9,7 @@ export function proxy(request: NextRequest) {
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/supabase") ||
+    pathname.startsWith("/api/ai/test") ||
     pathname === "/favicon.ico" ||
     pathname.includes(".")
   ) {
