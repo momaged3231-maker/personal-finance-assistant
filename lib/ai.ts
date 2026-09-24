@@ -1,20 +1,96 @@
 import OpenAI from "openai";
+import { requireSupabase } from "./supabase";
 import {
   getAccounts,
   getDailySummary,
   getMonthlySummary,
   getRecentTransactions,
   getExpenseCategoriesBreakdown,
+  getSettings,
   formatEgp,
   egpToPiastres,
   piastresToEgp,
 } from "./finance";
 
-// Initialize OpenAI client if key is set
-function getOpenAIClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
+export interface AiProviderConfig {
+  provider: "openai" | "openrouter";
+  apiKey: string;
+  baseURL?: string;
+  model: string;
+}
+
+// Read AI provider config from user settings (with env fallbacks)
+export async function getAiProviderConfig(userId = 1): Promise<AiProviderConfig> {
+  const settings = await getSettings(userId);
+  const provider = (settings.ai_provider || "openai") as AiProviderConfig["provider"];
+  const apiKey =
+    settings.ai_api_key ||
+    settings.openai_key ||
+    (provider === "openrouter" ? process.env.OPENROUTER_API_KEY : "") ||
+    process.env.OPENAI_API_KEY ||
+    "";
+  const baseURL =
+    settings.ai_base_url ||
+    (provider === "openrouter" ? "https://openrouter.ai/api/v1" : undefined);
+  const model =
+    settings.ai_model ||
+    (provider === "openrouter" ? "openrouter/auto" : "gpt-4o-mini");
+  return { provider, apiKey, baseURL, model };
+}
+
+// Initialize OpenAI-compatible client (works with OpenAI or OpenRouter) if key is set
+async function getOpenAIClient(userId = 1): Promise<OpenAI | null> {
+  const { apiKey, baseURL } = await getAiProviderConfig(userId);
   if (!apiKey) return null;
-  return new OpenAI({ apiKey });
+  return new OpenAI({ apiKey, baseURL });
+}
+
+export interface AiMessageRow {
+  id: number;
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: string;
+}
+
+// Load the last N conversation messages for a user (oldest → newest)
+export async function getConversationHistory(userId = 1, limit = 20): Promise<AiMessageRow[]> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("ai_messages")
+    .select("id, role, content, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return ((data || []) as AiMessageRow[]).reverse();
+}
+
+// Persist a conversation turn into ai_messages (silently ignore failures)
+export async function saveAiMessage(userId: number, role: "user" | "assistant" | "system", content: string): Promise<void> {
+  try {
+    const client = requireSupabase();
+    await client.from("ai_messages").insert({ user_id: userId, role, content });
+  } catch (e) {
+    console.error("Failed to save ai message:", e instanceof Error ? e.message : e);
+  }
+}
+
+// Map stored history rows into chat completions messages
+function mapHistoryToMessages(history: AiMessageRow[]): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  return history
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
+// Normalize Arabic letters (hamza variants, taa marbuta, alef maqsura) for robust pattern matching
+export function normalizeArabic(text: string): string {
+  return text
+    .replace(/[\u064B-\u0652]/g, "") // tashkeel
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ى/g, "ي");
 }
 
 // Convert Eastern Arabic numerals (٠-٩) and common Arabic number words to standard number
@@ -97,7 +173,8 @@ export interface AssistantResponse {
 
 // Local Egyptian Arabic Parser & Financial Query Engine
 export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): Promise<AssistantResponse> {
-  const query = userPrompt.trim();
+  const rawQuery = userPrompt.trim();
+  const query = normalizeArabic(rawQuery);
   const accounts = await getAccounts(userId);
   const cashAcc = accounts.find((a) => a.name.includes("كاش") && !a.name.includes("فودافون")) || accounts[0];
   const bankAcc = accounts.find((a) => a.name.includes("بنك")) || accounts[1];
@@ -328,29 +405,67 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
     };
   }
 
+  // Saving advice / guidance questions (built from real spending data + quick wins)
+  if (/إزاي\s+أقلل|ازاي\s+اقلل|إزاي\s+أوفر|ازاي\s+اوفر|قلل\s+المصاريف|خفض|نصيحة|نصيحني|انصحني|اوفر\s+فلوس|أوفّر/i.test(query)) {
+    const breakdown = await getExpenseCategoriesBreakdown(undefined, userId);
+    const month = await getMonthlySummary(undefined, userId);
+    const topLine =
+      breakdown.length > 0
+        ? breakdown.slice(0, 3).map((b) => `• ${b.category}: ${formatEgp(b.total)} إجمالي الشهر (${b.count} عملية)`).join("\n")
+        : "";
+    const advice =
+      breakdown.length > 0
+        ? `أول خطوة: بص على تلات تصنيفات أكبرهم:\n${topLine}\n\nوبدء بأنشئ حد شهري لكل تصنيف من صفحة الإعدادات (Budgets)، وأي مصروف يعدّي 80% هيجي لك تنبيه وهمّمك متأخرش. `
+        : `لسه مفيش مصروفات مسجلة الشهر ده، فأي مصروف بتسجله هيساعدني أديك تحليل أحسن. `;
+    return {
+      text: `فكرة كويسة نخلي مصروفاتك تتنظم! 💡\n\n${advice}${
+        month.expense > 0
+          ? `\nصافي الشهر عندك: ${month.net >= 0 ? "فائض +" : "عجز "}${formatEgp(month.net)}`
+          : ""
+      }\n\nجرب كمان تسجل مصاريفك الصغيرة اليومية (القهوة، المواصلات) وكل ما تسجل أشوفلك نقاط توفير أوتوماتيك.`,
+    };
+  }
+
+  // Financial goals and planning questions
+  if (/خطط|هدف|عايز\s+أدخر|ادخار|ادخر|حلم|استثمر|مستقبل/i.test(query)) {
+    const accounts = await getAccounts(userId);
+    const total = accounts.reduce((acc, a) => acc + a.balance, 0);
+    return {
+      text: `وصلني! 👌\n\nإجمالي فلوسك الحالي: ${formatEgp(total)}\n\nدي خطة عملية بسيطة:\n• حدد هدف بسيط شهري (مثلاً وفر 10% من دخلك)\n• سجّل هدف في صفحة «الأهداف» وعيّن مبلغ واستمارة\n• كل ما تحوّل أو تودّع فلوس للهدف، سجّلها وهو يبقى يتحدث قدامك\n\nاقدر أساعدك كمان تضع ميزانية شهرية للحاجات الأساسية بدل ما تتسلف.`,
+    };
+  }
+
   // Default Egyptian friendly assistant reply
+  const accountsShort = accounts.slice(0, 3).map((a) => `${a.name}: ${formatEgp(a.balance)}`).join(" | ");
   return {
-    text: `أهلاً بيك يا باشا! أنا مساعدك المالي الشخصي. 🤖\n\nتقدر تسألني أي سؤال عن فلوسك، أو تطلب مني أسجل لك العمليات مباشرة، زي:\n• "صرفت كام النهارده؟"\n• "معايا كام في البنك؟"\n• "سجل 75 جنيه سجائر"\n• "دخلت 600 عمولة"\n• "حولت 500 للبنك"\n• "أكتر حاجة بصرف عليها إيه؟"`,
+    text: `فهمتك يا فندم، ومش فاتني أي حاجة من حسابك الحالي:\n📌 ${accountsShort}\n\nتقدر تسألني بأي طريقة على سبيل المثال:\n• «صرفت كام النهارده؟»\n• «معايا كام في البنك؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n• «أكتر حاجة بصرف عليها إيه؟»\n• «إزاي أقلل المصاريف؟»\n\nولو قصدك حاجة معينة تاني، قوليها بكلماتك وأنا أرد عليك فوراً.`,
   };
 }
 
 // Full AI Pipeline: Tries OpenAI first if configured, with rich functions; otherwise falls back smoothly to local Egyptian parser
 export async function processAssistantMessage(userPrompt: string, userId = 1): Promise<AssistantResponse> {
-  const openai = getOpenAIClient();
+  const config = await getAiProviderConfig(userId);
+  const openai = await getOpenAIClient(userId);
 
-  if (!openai) {
+  // Persist the user's message so we can keep a conversation memory
+  await saveAiMessage(userId, "user", userPrompt);
+
+  let result: AssistantResponse;
+
+  if (!openai || !config.apiKey) {
     // Return fast, dependable local Egyptian parsing
-    return handleLocalEgyptianQuery(userPrompt, userId);
-  }
+    result = await handleLocalEgyptianQuery(userPrompt, userId);
+  } else {
+    try {
+      const accounts = await getAccounts(userId);
+      const today = await getDailySummary(undefined, userId);
+      const month = await getMonthlySummary(undefined, userId);
+      const topExpenses = await getExpenseCategoriesBreakdown(undefined, userId);
+      const recent = await getRecentTransactions(5, userId);
+      // Load previous conversation turns for memory
+      const history = await getConversationHistory(userId, 20);
 
-  try {
-    const accounts = await getAccounts(userId);
-    const today = await getDailySummary(undefined, userId);
-    const month = await getMonthlySummary(undefined, userId);
-    const topExpenses = await getExpenseCategoriesBreakdown(undefined, userId);
-    const recent = await getRecentTransactions(5, userId);
-
-    const systemPrompt = `أنت المساعد المالي الشخصي الذكي لواحد مصري ("مساعدك المالي اليومي").
+      const systemPrompt = `أنت المساعد المالي الشخصي الذكي لواحد مصري ("مساعدك المالي اليومي").
 اللغة: مصري ودي وسريع وفاهم طبيعة المصاريف في مصر (القهوة، السجائر، البنزين، السوبرماركت، فودافون كاش، العمولات، المرتب).
 البيانات المالية الحالية للمستخدم مباشرة من قاعدة البيانات (PostgreSQL):
 - تاريخ اليوم: ${today.date}
@@ -376,62 +491,86 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
    "هسجل: [المبلغ] جنيه [الوصف] من [الحساب]. تأكيد؟"
    ورجع JSON في نهاية رسالتك بالشكل التالي:
    ACTION_JSON:{"type":"expense|income|transfer","amount":المبلغ_بالجنيه,"description":"...","category":"...","accountName":"الكاش|البنك|فودافون كاش"}
-2. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.`;
+2. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.
+3. افتكر سياق المحادثة السابقة (الأسئلة السابقة وردودك) وفيه ردودك والإجراءات اللي حصلت، وخلي ردودك متسقة مع المحادثة. لو سألك شيء زي "وأيه تاني / إزاي؟" اعرف إنه بيكمل على آخر سؤال.
+4. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.3,
-    });
+      const chatParams: Record<string, unknown> = {
+        model: config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...mapHistoryToMessages(history),
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: 2000,
+      };
+      // O-series reasoning models (o1/o3/o4) don't accept temperature
+      if (!/\/?o[134](-|$)/i.test(config.model)) {
+        chatParams.temperature = 0.3;
+      }
+      const completion = await openai.chat.completions.create(chatParams as never);
 
-    const reply = completion.choices[0]?.message?.content || "";
+      const reply = completion.choices[0]?.message?.content || "";
 
-    // Check if ACTION_JSON was returned
-    if (reply.includes("ACTION_JSON:")) {
-      const parts = reply.split("ACTION_JSON:");
-      const messageText = parts[0].trim();
-      try {
-        const actionRaw = JSON.parse(parts[1].trim());
-        const amountEgp = Number(actionRaw.amount);
-        const piastres = egpToPiastres(amountEgp);
+      // Check if ACTION_JSON was returned
+      if (reply.includes("ACTION_JSON:")) {
+        const parts = reply.split("ACTION_JSON:");
+        const messageText = parts[0].trim();
+        try {
+          const actionRaw = JSON.parse(parts[1].trim());
+          const amountEgp = Number(actionRaw.amount);
+          const piastres = egpToPiastres(amountEgp);
 
-        const targetAcc = accounts.find((a) => a.name.includes(actionRaw.accountName)) || accounts[0];
-        let toAcc: (typeof accounts)[number] | undefined = undefined;
-        if (actionRaw.type === "transfer") {
-          toAcc = accounts.find((a) => a.id !== targetAcc.id) || accounts[1];
+          const targetAcc = accounts.find((a) => a.name.includes(actionRaw.accountName)) || accounts[0];
+          let toAcc: (typeof accounts)[number] | undefined = undefined;
+          if (actionRaw.type === "transfer") {
+            toAcc = accounts.find((a) => a.id !== targetAcc.id) || accounts[1];
+          }
+
+          const action: ParsedAction = {
+            type: actionRaw.type,
+            amount: piastres,
+            amountEgp,
+            description: actionRaw.description || (actionRaw.type === "expense" ? "مصروف" : "دخل"),
+            category: actionRaw.category || "أخرى",
+            accountId: targetAcc.id,
+            accountName: targetAcc.name,
+            toAccountId: toAcc?.id,
+            toAccountName: toAcc?.name,
+            requiresConfirmation: true,
+            confirmationMessage: messageText,
+          };
+
+          result = {
+            text: messageText,
+            action,
+          };
+        } catch (e) {
+          console.error("Failed to parse action json", e);
+          result = { text: reply };
         }
-
-        const action: ParsedAction = {
-          type: actionRaw.type,
-          amount: piastres,
-          amountEgp,
-          description: actionRaw.description || (actionRaw.type === "expense" ? "مصروف" : "دخل"),
-          category: actionRaw.category || "أخرى",
-          accountId: targetAcc.id,
-          accountName: targetAcc.name,
-          toAccountId: toAcc?.id,
-          toAccountName: toAcc?.name,
-          requiresConfirmation: true,
-          confirmationMessage: messageText,
+      } else {
+        result = { text: reply };
+      }
+    } catch (error) {
+      console.error("OpenAI call failed, falling back to local Egyptian parser", error);
+      const msg = error instanceof Error ? error.message : "";
+      // Detect low-credit / quota errors so the user knows why the AI isn't reasoning
+      if (/402|credits|quota|insufficient|payment/i.test(msg)) {
+        const fallback = await handleLocalEgyptianQuery(userPrompt, userId);
+        result = {
+          text: `${fallback.text}\n\n⚠️ ملحوظة صغيرة: الموديل اللي راكب — ${config.model} — محتاج إضافة كريدت في حسابك على OpenRouter عشان يرد عليك بذكاء حقيقي. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
+          action: fallback.action,
         };
-
-        return {
-          text: messageText,
-          action,
-        };
-      } catch (e) {
-        console.error("Failed to parse action json", e);
+      } else {
+        result = await handleLocalEgyptianQuery(userPrompt, userId);
       }
     }
-
-    return {
-      text: reply,
-    };
-  } catch (error) {
-    console.error("OpenAI call failed, falling back to local Egyptian parser", error);
-    return handleLocalEgyptianQuery(userPrompt, userId);
   }
+
+  // Persist the assistant reply so memory keeps the full conversation
+  if (result.text) {
+    await saveAiMessage(userId, "assistant", result.text);
+  }
+  return result;
 }

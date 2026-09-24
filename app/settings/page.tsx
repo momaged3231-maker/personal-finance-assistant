@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Settings as SettingsIcon,
   Shield,
@@ -17,13 +18,10 @@ import {
   AlertTriangle,
   Loader2,
   UserCheck,
-  KeyRound,
   Calculator,
   RefreshCw,
   Cloud,
-  ExternalLink,
   CheckCircle2,
-  Copy,
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
 
@@ -35,6 +33,7 @@ interface Category {
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<
     "roles" | "finance" | "accounts" | "categories" | "ai" | "backup" | "supabase"
   >("roles");
@@ -68,6 +67,11 @@ export default function SettingsPage() {
   // AI Settings
   const [openAiKey, setOpenAiKey] = useState("");
   const [aiTone, setAiTone] = useState("egyptian");
+  const [aiProvider, setAiProvider] = useState<"openai" | "openrouter">("openrouter");
+  const [aiBaseUrl, setAiBaseUrl] = useState("https://openrouter.ai/api/v1");
+  const [aiModel, setAiModel] = useState("openrouter/auto");
+  const [importedModels, setImportedModels] = useState<string[]>([]);
+  const [importingModels, setImportingModels] = useState(false);
 
   // Accounts & Categories
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -81,29 +85,37 @@ export default function SettingsPage() {
   const [newCatName, setNewCatName] = useState("");
   const [newCatType, setNewCatType] = useState<"expense" | "income">("expense");
 
+  // Apply finance data from API to state
+  function applyFinanceData(data: { accounts?: Account[]; categories?: Category[]; settings?: Record<string, string> }) {
+    setAccounts(data.accounts || []);
+    setCategories(data.categories || []);
+
+    const s = data.settings || {};
+    if (s.monthly_salary) setSalary(s.monthly_salary);
+    if (s.maintenance_shop_cut) setShopCut(s.maintenance_shop_cut);
+    if (s.maintenance_user_cut) setUserCut(s.maintenance_user_cut);
+    if (s.currency_symbol) setCurrency(s.currency_symbol);
+    if (s.current_role) setCurrentRole(s.current_role);
+    if (s.require_pin) setPinLock(s.require_pin === "true");
+    if (s.security_pin) setPinCode(s.security_pin);
+    if (s.openai_key) setOpenAiKey(s.openai_key);
+    if (s.ai_tone) setAiTone(s.ai_tone);
+    if (s.ai_provider === "openai" || s.ai_provider === "openrouter") setAiProvider(s.ai_provider);
+    if (s.ai_base_url) setAiBaseUrl(s.ai_base_url);
+    if (s.ai_model) setAiModel(s.ai_model);
+  }
+
   // Fetch initial settings & data
   async function loadData() {
     try {
       const res = await fetch("/api/finance");
       if (res.status === 401) {
-        window.location.href = "/landing";
+        router.replace("/landing");
         return;
       }
       if (res.ok) {
         const data = await res.json();
-        setAccounts(data.accounts || []);
-        setCategories(data.categories || []);
-
-        const s = data.settings || {};
-        if (s.monthly_salary) setSalary(s.monthly_salary);
-        if (s.maintenance_shop_cut) setShopCut(s.maintenance_shop_cut);
-        if (s.maintenance_user_cut) setUserCut(s.maintenance_user_cut);
-        if (s.currency_symbol) setCurrency(s.currency_symbol);
-        if (s.current_role) setCurrentRole(s.current_role);
-        if (s.require_pin) setPinLock(s.require_pin === "true");
-        if (s.security_pin) setPinCode(s.security_pin);
-        if (s.openai_key) setOpenAiKey(s.openai_key);
-        if (s.ai_tone) setAiTone(s.ai_tone);
+        applyFinanceData(data);
       }
     } catch (e) {
       console.error(e);
@@ -113,8 +125,27 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let active = true;
+    const initialLoad = async () => {
+      try {
+        const res = await fetch("/api/finance");
+        if (res.status === 401) {
+          if (active) router.replace("/landing");
+          return;
+        }
+        if (res.ok && active) {
+          const data = await res.json();
+          applyFinanceData(data);
+        }
+      } catch (e) {
+        if (active) console.error(e);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    initialLoad();
+    return () => { active = false; };
+  }, [router]);
 
   function notify(text: string, type: "success" | "error" = "success") {
     setMessage({ text, type });
@@ -133,10 +164,55 @@ export default function SettingsPage() {
       if (res.ok) {
         notify(successMsg || "تم حفظ الإعداد بنجاح!");
       }
-    } catch (e) {
+    } catch {
       notify("حدث خطأ أثناء الحفظ", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Save all AI provider settings
+  async function handleSaveAiSettings() {
+    setSaving(true);
+    try {
+      const pairs: Array<[string, string]> = [
+        ["ai_provider", aiProvider],
+        ["ai_base_url", aiBaseUrl],
+        ["ai_model", aiModel],
+      ];
+      if (openAiKey.trim()) pairs.push(["ai_api_key", openAiKey.trim()]);
+      for (const [key, value] of pairs) {
+        const res = await fetch("/api/finance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update_setting", key, value }),
+        });
+        if (!res.ok) throw new Error("فشل حفظ أحد الإعدادات");
+      }
+      notify("تم حفظ إعدادات مزود الذكاء الاصطناعي بنجاح!");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "حدث خطأ أثناء الحفظ", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Import available models from OpenRouter
+  async function handleImportModels() {
+    setImportingModels(true);
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/models");
+      if (!res.ok) throw new Error("فشل الاتصال بـ OpenRouter");
+      const json = await res.json();
+      const ids = (json.data || [])
+        .map((m: { id?: string }) => m.id)
+        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+      setImportedModels(ids);
+      notify(`تم استيراد ${ids.length} موديل من OpenRouter!`);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "فشل استيراد الموديلات", "error");
+    } finally {
+      setImportingModels(false);
     }
   }
 
@@ -161,7 +237,7 @@ export default function SettingsPage() {
         notify("تمت إضافة الحساب بنجاح!");
         loadData();
       }
-    } catch (e) {
+    } catch {
       notify("فشل إنشاء الحساب", "error");
     }
   }
@@ -204,7 +280,7 @@ export default function SettingsPage() {
         notify("تمت إضافة التصنيف بنجاح!");
         loadData();
       }
-    } catch (e) {
+    } catch {
       notify("فشل إنشاء التصنيف", "error");
     }
   }
@@ -222,7 +298,7 @@ export default function SettingsPage() {
         notify("تم حذف التصنيف");
         loadData();
       }
-    } catch (e) {
+    } catch {
       notify("فشل الحذف", "error");
     }
   }
@@ -244,7 +320,7 @@ export default function SettingsPage() {
         URL.revokeObjectURL(url);
         notify("تم تنزيل النسخة الاحتياطية بنجاح!");
       }
-    } catch (e) {
+    } catch {
       notify("فشل التصدير", "error");
     }
   }
@@ -269,7 +345,7 @@ export default function SettingsPage() {
         notify("تم تصفير جميع العمليات بنجاح!");
         loadData();
       }
-    } catch (e) {
+    } catch {
       notify("فشل التصفير", "error");
     }
   }
@@ -794,57 +870,172 @@ export default function SettingsPage() {
             إعدادات الذكاء الاصطناعي والمحادثة
           </h2>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                مفتاح OpenAI API Key (اختياري)
-              </label>
-              <p className="text-[11px] text-slate-400 mb-2">
-                المساعد المالي يعمل بكفاءة محلياً حتى بدون المفتاح. لو أردت ذكاء GPT-4o المتقدم، ضع مفتاحك هنا.
-              </p>
-              <input
-                type="password"
-                placeholder="sk-proj-..."
-                value={openAiKey}
-                onChange={(e) => setOpenAiKey(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-              />
-              <button
-                onClick={() => handleSaveSetting("openai_key", openAiKey, "تم حفظ مفتاح OpenAI بنجاح")}
-                className="mt-2 py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
-              >
-                حفظ المفتاح
-              </button>
+          {/* Provider Selector */}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-2">
+              مزود الذكاء الاصطناعي (Provider)
+            </label>
+            <div className="grid grid-cols-2 gap-2 max-w-md">
+              {[
+                { id: "openrouter", label: "راوتر OpenRouter", desc: "OpenRouter.ai" },
+                { id: "openai", label: "أوبن إيه آي OpenAI", desc: "OpenAI" },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    setAiProvider(p.id as "openai" | "openrouter");
+                    setAiBaseUrl(
+                      p.id === "openrouter"
+                        ? "https://openrouter.ai/api/v1"
+                        : "https://api.openai.com/v1"
+                    );
+                    setAiModel(
+                      p.id === "openrouter" ? "openrouter/auto" : "gpt-4o-mini"
+                    );
+                  }}
+                  className={`p-3 rounded-xl border text-start transition-all ${
+                    aiProvider === p.id
+                      ? "bg-indigo-600/20 border-indigo-500 text-white"
+                      : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+                  }`}
+                >
+                  <span className="block text-sm font-extrabold">{p.label}</span>
+                  <span className="block text-[11px] opacity-70 mt-0.5">{p.desc}</span>
+                </button>
+              ))}
             </div>
+          </div>
 
-            <div className="pt-2 border-t border-slate-800">
-              <label className="block text-xs font-bold text-slate-300 mb-2">
-                أسلوب رد المساعد
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: "egyptian", label: "🇪🇬 عامية مصرية ودودة" },
-                  { id: "formal", label: "📜 فصحى رسمية" },
-                  { id: "brief", label: "⚡ أرقام مباشرة ومختصرة" },
-                ].map((t) => (
+          {/* API Key */}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              مفتاح API Key (اختياري)
+            </label>
+            <p className="text-[11px] text-slate-400 mb-2">
+              {aiProvider === "openrouter"
+                ? "انسخ مفتاحك من openrouter.ai/keys (تنسيق sk-or-...). المساعد يعمل محلياً حتى بدون المفتاح."
+                : "المساعد المالي يعمل بكفاءة محلياً حتى بدون المفتاح. لو أردت ذكاء متقدم، ضع مفتاحك هنا."}
+            </p>
+            <input
+              type="password"
+              placeholder={aiProvider === "openrouter" ? "sk-or-..." : "sk-proj-..."}
+              value={openAiKey}
+              onChange={(e) => setOpenAiKey(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          {/* Base URL */}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              رابط الإصدار API (Base URL)
+            </label>
+            <input
+              type="text"
+              value={aiBaseUrl}
+              onChange={(e) => setAiBaseUrl(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          {/* Model */}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              اسم الموديل (Model)
+            </label>
+            <input
+              type="text"
+              list="ai-model-list"
+              placeholder="اكتب اسم الموديل يدوياً أو اختر من القائمة..."
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+            />
+            <datalist id="ai-model-list">
+              {(importedModels.length > 0
+                ? importedModels
+                : [
+                    "openrouter/auto",
+                    "openai/gpt-4o-mini",
+                    "openai/gpt-4o",
+                    "anthropic/claude-3.5-sonnet",
+                    "google/gemini-flash-1.5",
+                    "meta-llama/llama-3.3-70b-instruct",
+                  ]
+              ).map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              ممكن تكتب اسم الموديل يدوياً (مثلاً: openai/gpt-4o-mini) أو تستورد كل الموديلات المتاحة من OpenRouter بالزر ده.
+            </p>
+            <button
+              onClick={handleImportModels}
+              disabled={importingModels}
+              className="mt-2 py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition"
+            >
+              {importingModels ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              {importingModels ? "جاري الاستيراد..." : "استيراد كل موديلات OpenRouter"}
+            </button>
+            {importedModels.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                {importedModels.map((m) => (
                   <button
-                    key={t.id}
-                    onClick={() => {
-                      setAiTone(t.id);
-                      handleSaveSetting("ai_tone", t.id, `تم ضبط الأسلوب: ${t.label}`);
-                    }}
-                    className={`p-3 rounded-xl border text-xs font-bold transition-all ${
-                      aiTone === t.id
-                        ? "bg-indigo-600/20 border-indigo-500 text-indigo-300"
+                    key={m}
+                    onClick={() => setAiModel(m)}
+                    className={`text-[10px] px-2 py-1 rounded-lg border transition ${
+                      aiModel === m
+                        ? "bg-indigo-600/30 border-indigo-500 text-indigo-200"
                         : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
                     }`}
                   >
-                    {t.label}
+                    {m}
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-slate-800">
+            <label className="block text-xs font-bold text-slate-300 mb-2">
+              أسلوب رد المساعد
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: "egyptian", label: "🇪🇬 عامية مصرية ودودة" },
+                { id: "formal", label: "📜 فصحى رسمية" },
+                { id: "brief", label: "⚡ أرقام مباشرة ومختصرة" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setAiTone(t.id);
+                    handleSaveSetting("ai_tone", t.id, `تم ضبط الأسلوب: ${t.label}`);
+                  }}
+                  className={`p-3 rounded-xl border text-xs font-bold transition-all ${
+                    aiTone === t.id
+                      ? "bg-indigo-600/20 border-indigo-500 text-indigo-300"
+                      : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
           </div>
+
+          <button
+            onClick={handleSaveAiSettings}
+            disabled={saving}
+            className="py-2.5 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition"
+          >
+            <Check className="w-4 h-4" />
+            حفظ إعدادات الذكاء الاصطناعي
+          </button>
         </div>
       )}
 

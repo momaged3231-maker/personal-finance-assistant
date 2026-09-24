@@ -1,7 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveUserId } from "@/lib/auth";
-import { processAssistantMessage, ParsedAction } from "@/lib/ai";
+import { processAssistantMessage, getConversationHistory, saveAiMessage, ParsedAction } from "@/lib/ai";
 import { createExpense, createIncome, createTransfer } from "@/lib/finance";
+
+// GET: Load the remembered conversation history for the active user
+export async function GET() {
+  try {
+    const userId = await getActiveUserId();
+    if (!userId) {
+      return NextResponse.json(
+        { error: "غير مصرح - يرجى تسجيل الدخول أولاً", unauthenticated: true },
+        { status: 401 }
+      );
+    }
+    const history = await getConversationHistory(userId, 50);
+    return NextResponse.json({ history });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Error loading history";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -50,8 +68,14 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      const replyText = `تم حفظ العملية بنجاح! ✅\nتم تحديث الأرصدة وإحصائيات اليوم فوراً.`;
+
+      // Save into conversation memory so the assistant knows what was done
+      await saveAiMessage(userId, "user", action.confirmationMessage || `تأكيد تسجيل ${action.type}`);
+      await saveAiMessage(userId, "assistant", replyText);
+
       return NextResponse.json({
-        text: `تم حفظ العملية بنجاح! ✅\nتم تحديث الأرصدة وإحصائيات اليوم فوراً.`,
+        text: replyText,
         executed: true,
         transaction: result,
       });

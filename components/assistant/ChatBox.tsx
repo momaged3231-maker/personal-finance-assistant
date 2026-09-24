@@ -157,6 +157,36 @@ export default function ChatBox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
+  // Load remembered conversation from the server (memory) when the page opens
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/assistant");
+        if (!res.ok) return;
+        const data = await res.json();
+        const history: Array<{ role: "user" | "assistant"; content: string }> = data.history || [];
+        if (!active || history.length === 0) return;
+
+        const loaded: Message[] = history.map((h, i) => ({
+          id: "h-" + i + "-" + Date.now(),
+          role: h.role,
+          content: h.content,
+          createdAt: new Date().toLocaleTimeString("ar-EG", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        }));
+        setMessages(loaded);
+      } catch (e) {
+        console.error("Failed to load assistant history", e);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function sendMessage(textToSend?: string) {
     const text = (textToSend || input).trim();
     if (!text || loading) return;

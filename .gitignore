@@ -41,6 +41,12 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 
+# local dev logs
+devlog.txt
+
+# local DB bootstrap scripts (may contain credentials)
+scripts/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
