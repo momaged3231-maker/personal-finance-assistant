@@ -454,7 +454,11 @@ function buildActionFromRaw(raw: Record<string, unknown>, accounts: Account[]): 
   const amountEgp = toEgpNum(raw.amountEgp ?? raw.amount);
   const amount = egpToPiastres(amountEgp);
   const description = String(raw.description || "").trim() || "عملية";
-  const category = String(raw.category || "").trim() || "أخرى";
+  let category = String(raw.category || "").trim();
+  if (/سوبر|هايبر|ماركت|كارفور|متجر|تسوق|هدوم|ملابس|مشتريات/i.test(category) && !/طعام/.test(category)) {
+    category = /هدوم|ملابس|تسوق|مشتريات/i.test(category) ? "تسوق ومشتريات" : "طعام ومشروبات";
+  }
+  if (!category) category = "أخرى";
   const accountNameRaw = String(raw.accountName || "").trim();
 
   const cashAcc = accounts.find((a) => a.name.includes("كاش") && !a.name.includes("فودافون"));
@@ -531,28 +535,37 @@ export async function analyzeReceiptImage(imageDataUrl: string, userId = 1): Pro
     `أنت محلل فواتير مصري. اقرأ الفاتورة/الإيصال في الصورة واستخرج عملية الشراء الرئيسية الواحدة.\n` +
     `رجع JSON بس بالشكل ده:\n` +
     `ACTION_JSON:{"type":"expense","amountEgp":رقم,"description":"وصف قصير بالعربي","category":"التصنيف"}\n` +
-    `التصنيف من: سوپرماركت / طعام ومشروبات / مواصلات وبنزين / فواتير والتزامات / صحة وعلاج / تسوق ومشتريات / أخرى.\n` +
+    `التصنيف من: طعام ومشروبات / مواصلات وبنزين / فواتير والتزامات / صحة وعلاج / سجائر / تسوق ومشتريات / أخرى.\n` +
     `لو مش قادر تقرا الصورة رجع: ACTION_JSON:{"error":"..."}`;
 
-  const chatParams: Record<string, unknown> = {
-    model: config.model,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: imageDataUrl } },
-        ],
-      },
-    ],
-    max_tokens: 800,
+  const buildChat = () => {
+    const params: Record<string, unknown> = {
+      model: config.model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+      max_tokens: 800,
+    };
+    if (!/\/?o[134](-|$)/i.test(config.model)) {
+      params.temperature = 0.1;
+    }
+    return params;
   };
-  if (!/\/?o[134](-|$)/i.test(config.model)) {
-    chatParams.temperature = 0.1;
+
+  // Free routers can be flaky — retry once if the model didn't return an ACTION_JSON
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const completion = await openai.chat.completions.create(buildChat() as never);
+    const reply = completion.choices[0]?.message?.content || "";
+    const parsed = parseActionReply(reply, accounts, "قريت الفاتورة، جاهز أسجلها:");
+    if (parsed.action || attempt === 1) return parsed;
   }
-  const completion = await openai.chat.completions.create(chatParams as never);
-  const reply = completion.choices[0]?.message?.content || "";
-  return parseActionReply(reply, accounts, "قريت الفاتورة، جاهز أسجلها:");
+  return { text: "قرأت الفاتورة لكن الموديل رجع شكل تاني — جرب تاني أو ارفع صورة أوضح." };
 }
 
 // ------------------------------------------------------------------
