@@ -15,12 +15,8 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" className="dark h-full">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;500;600;700;800;900&display=swap"
-          rel="stylesheet"
-        />
+        <link rel="preload" href="/fonts/UMBXrPdDqW66y0Y2usFeaijdA4M5.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/UMBXrPdDqW66y0Y2usFeai3dAw.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body className="font-sans bg-[#090D16] text-[#F8FAFC] min-h-screen flex flex-col antialiased selection:bg-emerald-500/30 selection:text-emerald-200 relative">
         {/* 2px signature top accent line */}
