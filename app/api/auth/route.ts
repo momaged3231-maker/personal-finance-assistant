@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getActiveUserId, getUserById, getUserByEmail } from "@/lib/auth";
 import { requireSupabase } from "@/lib/supabase";
 import { signValue } from "@/lib/cookie-sign";
+import { hashPassword, verifyPassword, isHashedPassword, isWeakPassword } from "@/lib/password";
 import { cookies } from "next/headers";
 
 export async function GET() {
@@ -49,8 +50,25 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" }, { status: 401 });
       }
 
-      // Check password (allow default demo pass if unset)
-      if (user.password && user.password !== password && password !== "admin123" && password !== "user123" && password !== "123456") {
+      // Check password — hashed rows verify via scrypt; legacy plaintext rows are
+      // compared once then migrated to a hash on success.
+      let passwordOk = false;
+      if (isHashedPassword(user.password)) {
+        passwordOk = verifyPassword(password, user.password);
+      } else {
+        passwordOk = Boolean(user.password && user.password === password && password);
+        if (passwordOk) {
+          // Upgrade the legacy plaintext row to a hash (best-effort; retried on next login)
+          try {
+            const client = requireSupabase();
+            await client.from("users").update({ password: hashPassword(password) }).eq("id", user.id);
+          } catch {
+            // Non-fatal: login succeeds, migration retries next time
+          }
+        }
+      }
+
+      if (!passwordOk) {
         return NextResponse.json({ error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" }, { status: 401 });
       }
 
@@ -75,6 +93,12 @@ export async function POST(req: NextRequest) {
       if (!name || !email || !password) {
         return NextResponse.json({ error: "يرجى تعبئة جميع الحقول الإلزامية" }, { status: 400 });
       }
+      if (password.length < 6) {
+        return NextResponse.json({ error: "كلمة المرور يجب ألا تقل عن 6 أحرف" }, { status: 400 });
+      }
+      if (isWeakPassword(password)) {
+        return NextResponse.json({ error: "كلمة مرور ضعيفة جداً. اختر كلمة مرور أقوى." }, { status: 400 });
+      }
 
       const existing = await getUserByEmail(email);
       if (existing) {
@@ -92,7 +116,7 @@ export async function POST(req: NextRequest) {
         .insert({
           name,
           email: email.trim().toLowerCase(),
-          password,
+          password: hashPassword(password),
           phone: phone || null,
           plan: planType,
           status: "active",

@@ -2,9 +2,9 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 /**
  * Signs cookie values with an HMAC so clients can't forge session IDs (e.g.
- * setting finance_user_id=1 to impersonate the admin). When no secret is
- * configured the raw value is returned unchanged, preserving legacy behavior
- * during local development.
+ * setting finance_user_id=1 to impersonate the admin). A COOKIE_SIGNING_SECRET
+ * is MANDATORY: without it we refuse to sign (fail closed) instead of silently
+ * accepting raw values.
  */
 
 function signingSecret(): string {
@@ -13,7 +13,7 @@ function signingSecret(): string {
 
 export function signValue(value: string): string {
   const secret = signingSecret();
-  if (!secret) return value;
+  if (!secret) throw new Error("COOKIE_SIGNING_SECRET is not configured — refusing to sign cookies");
   const mac = createHmac("sha256", secret).update(value).digest("base64url");
   return `${value}.${mac}`;
 }
@@ -21,7 +21,7 @@ export function signValue(value: string): string {
 export function verifyValue(signed: string | undefined): string | null {
   if (!signed) return null;
   const secret = signingSecret();
-  if (!secret) return signed;
+  if (!secret) return null;
   const dot = signed.lastIndexOf(".");
   if (dot <= 0) return null;
   const value = signed.slice(0, dot);

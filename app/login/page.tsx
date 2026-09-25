@@ -8,12 +8,8 @@ import {
   Lock,
   Mail,
   ArrowRight,
-  ShieldCheck,
-  CheckCircle2,
   AlertCircle,
   Loader2,
-  UserCheck,
-  Zap,
 } from "lucide-react";
 
 export default function LoginPage() {
@@ -23,13 +19,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleLogin(e?: React.FormEvent, customEmail?: string, customPass?: string) {
+  async function handleLogin(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setError(null);
     setLoading(true);
-
-    const targetEmail = customEmail || email;
-    const targetPass = customPass || password;
 
     try {
       const res = await fetch("/api/auth", {
@@ -37,8 +30,8 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "login",
-          email: targetEmail,
-          password: targetPass,
+          email,
+          password,
         }),
       });
 
@@ -55,18 +48,6 @@ export default function LoginPage() {
     } catch {
       setError("حدث خطأ أثناء الاتصال بالخادم. يرجى المحاولة لاحقاً.");
       setLoading(false);
-    }
-  }
-
-  function handleDemoLogin(type: "admin" | "user") {
-    if (type === "admin") {
-      setEmail("admin@fintech.eg");
-      setPassword("admin123");
-      handleLogin(undefined, "admin@fintech.eg", "admin123");
-    } else {
-      setEmail("mahmoud@garage.eg");
-      setPassword("user123");
-      handleLogin(undefined, "mahmoud@garage.eg", "user123");
     }
   }
 
@@ -156,42 +137,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Quick Demo Logins */}
-          <div className="pt-4 border-t border-slate-800 space-y-2.5">
-            <p className="text-[11px] font-semibold text-slate-400 text-center">
-              تجربة سريعة بنقرة واحدة (حسابات تجريبية مسبقة)
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleDemoLogin("admin")}
-                className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-200 flex flex-col items-center gap-1 transition-all group"
-              >
-                <div className="flex items-center gap-1.5 text-amber-400">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span className="font-bold">حساب الأدمن</span>
-                </div>
-                <span className="text-[10px] text-slate-400 group-hover:text-slate-300">
-                  admin@fintech.eg
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleDemoLogin("user")}
-                className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-200 flex flex-col items-center gap-1 transition-all group"
-              >
-                <div className="flex items-center gap-1.5 text-emerald-400">
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span className="font-bold">حساب عميل</span>
-                </div>
-                <span className="text-[10px] text-slate-400 group-hover:text-slate-300">
-                  mahmoud@garage.eg
-                </span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Footer Links */}

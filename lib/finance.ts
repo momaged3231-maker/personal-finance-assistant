@@ -1,4 +1,5 @@
 import { requireSupabase } from "./supabase";
+import { hashPassword } from "./password";
 import {
   Account,
   Transaction,
@@ -1206,7 +1207,7 @@ export async function updateSystemSetting(key: string, value: string, descriptio
 
 export async function resetUserPassword(userId: number, newPassword: string): Promise<void> {
   const client = requireSupabase();
-  const { error } = await client.from("users").update({ password: newPassword }).eq("id", userId);
+  const { error } = await client.from("users").update({ password: hashPassword(newPassword) }).eq("id", userId);
   if (error) throw error;
 }
 
