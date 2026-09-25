@@ -41,9 +41,24 @@ export interface MonthlySummary {
   otherIncome: number;
 }
 
+export type ParsedActionType =
+  | "expense"
+  | "income"
+  | "transfer"
+  | "debt_create"
+  | "debt_payment"
+  | "debt_delete"
+  | "savings_goal_create"
+  | "savings_deposit"
+  | "savings_goal_delete"
+  | "bill_create"
+  | "budget_set"
+  | "transaction_delete"
+  | "transaction_update";
+
 export interface ParsedAction {
-  type: "expense" | "income" | "transfer";
-  amount: number; // in piastres
+  type: ParsedActionType;
+  amount: number; // in piastres (where meaningful)
   amountEgp: number;
   description: string;
   category: string;
@@ -51,6 +66,17 @@ export interface ParsedAction {
   accountName: string;
   toAccountId?: number;
   toAccountName?: string;
+  // Entity management fields
+  entityId?: number; // debt / goal / bill id (for payments, deletions, updates)
+  transactionId?: number; // for transaction_delete / transaction_update
+  personName?: string; // debt counter-party
+  dueDate?: string; // YYYY-MM-DD
+  debtKind?: "gam_eya" | "i_owe" | "owed_to_me";
+  frequency?: "weekly" | "monthly" | "quarterly" | "yearly";
+  dayOfMonth?: number;
+  targetAmount?: number; // piastres (savings goal target)
+  newAmount?: number; // piastres (transaction_update new amount)
+  newCategory?: string; // transaction_update new category
   requiresConfirmation: boolean;
   confirmationMessage: string;
 }

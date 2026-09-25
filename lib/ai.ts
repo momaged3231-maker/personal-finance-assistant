@@ -8,12 +8,24 @@ import {
   getExpenseCategoriesBreakdown,
   getSettings,
   getDebts,
+  getSavingsGoals,
+  getCategoryBudgets,
+  parseBankNotification,
+  updateSetting,
   getTodayDateString,
   formatEgp,
   egpToPiastres,
   piastresToEgp,
 } from "./finance";
-import { getActiveRecurringBills } from "./bills";
+import { getActiveRecurringBills, getUpcomingBills } from "./bills";
+import {
+  ParsedAction,
+  ParsedActionType,
+  AssistantResponse,
+  Account,
+} from "./types";
+
+export type { ParsedAction, ParsedActionType, AssistantResponse, Account };
 
 export interface AiProviderConfig {
   provider: "openai" | "openrouter";
@@ -154,25 +166,7 @@ export function parseArabicNumber(text: string): number | null {
   return null;
 }
 
-export interface ParsedAction {
-  type: "expense" | "income" | "transfer";
-  amount: number; // in piastres
-  amountEgp: number;
-  description: string;
-  category: string;
-  accountId: number;
-  accountName: string;
-  toAccountId?: number;
-  toAccountName?: string;
-  requiresConfirmation: boolean;
-  confirmationMessage: string;
-}
-
-export interface AssistantResponse {
-  text: string;
-  action?: ParsedAction;
-  data?: Record<string, unknown>;
-}
+// ParsedAction & AssistantResponse come from ./types (re-exported above)
 
 // ------------------------------------------------------------------
 // Financial Intelligence: "المتاح بعد الالتزامات" + "أثر أي قرار"
@@ -234,6 +228,367 @@ export async function getObligationsOverview(userId = 1): Promise<ObligationsOve
   };
 }
 
+// ------------------------------------------------------------------
+// Day / month helpers
+// ------------------------------------------------------------------
+function daysInCurrentMonth(): { day: number; total: number } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  return { day: now.getDate(), total: new Date(year, month + 1, 0).getDate() };
+}
+
+// Next practical due date for a bill with day_of_month (handles months already passed)
+export function computeNextDueDate(dayOfMonth: number, base = new Date()): string {
+  const safeDay = Math.min(Math.max(dayOfMonth || 1, 1), 28);
+  const candidate = new Date(base.getFullYear(), base.getMonth(), safeDay);
+  if (candidate < new Date(base.getFullYear(), base.getMonth(), base.getDate())) {
+    candidate.setMonth(candidate.getMonth() + 1);
+  }
+  const y = candidate.getFullYear();
+  const m = String(candidate.getMonth() + 1).padStart(2, "0");
+  const d = String(candidate.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Extract a person's name from an Arabic command like «ضيف دين 300 لمحمد» / «من دين محمد»
+function extractPersonName(raw: string): string | undefined {
+  const prefixed = raw.match(/(?:ل|لم|من|عند|عن|مع)\s*([\u0600-\u06FF]{3,})/i);
+  if (prefixed) {
+    const name = prefixed[1];
+    if (!/^(دين|قرض|جديدة|جديد|البنك|الكاش|فودافون|مصروف|عملية|سجائر|اكل)/i.test(name)) {
+      return name;
+    }
+  }
+  const afterDebt = raw.match(/دين\s+([\u0600-\u06FF]{3,})/i);
+  if (afterDebt) {
+    const name = afterDebt[1];
+    if (!/^(من|و|عن|ل)/i.test(name)) return name;
+  }
+  return undefined;
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Budget alerts (category limits crossed / near limit)
+// ------------------------------------------------------------------
+export async function getBudgetAlertsText(userId = 1): Promise<{ text: string; warnings: Array<{ category: string; spent: number; limit: number; percent: number; exceeded: boolean }> }> {
+  const budgets = await getCategoryBudgets(undefined, userId);
+  const warnings = budgets.filter((b) => b.is_warning || b.is_exceeded).map((b) => ({
+    category: b.category,
+    spent: b.spent_amount,
+    limit: b.monthly_limit,
+    percent: b.percentage,
+    exceeded: b.is_exceeded,
+  }));
+  if (warnings.length === 0) {
+    return { text: "مفيش تصنيف عدّى أو قرب من حده الشهر ده ✅", warnings };
+  }
+  const lines = warnings.map((w) =>
+    w.exceeded
+      ? `⚠️ **${w.category}** خلصت حدك الشهري: صرفت ${formatEgp(w.spent)} من ${formatEgp(w.limit)} (${w.percent}%)`
+      : `⚠️ **${w.category}** قربت تعدّي الحد: صرفت ${formatEgp(w.spent)} من ${formatEgp(w.limit)} (${w.percent}%)`
+  );
+  return { text: lines.join("\n"), warnings };
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Spending pace forecast ("وتيرة الصرف")
+// ------------------------------------------------------------------
+export async function getSpendingPaceInfo(userId = 1): Promise<string> {
+  const { day, total } = daysInCurrentMonth();
+  const month = await getMonthlySummary(undefined, userId);
+  const ov = await getObligationsOverview(userId);
+  const avg = day > 0 ? month.expense / day : 0;
+  const remaining = total - day;
+  const projected = Math.round(month.expense + avg * remaining * 100) / 100;
+  const daysFunded = avg > 0 ? Math.floor(ov.available / avg) : remaining;
+
+  let text =
+    `وتيرة صرفك الشهر ده 🏃\n` +
+    `• صرفت حتى الآن (اليوم ${day} من ${total}): ${formatEgp(month.expense)}\n` +
+    `• متوسط صرفك اليومي: ${formatEgp(avg)}\n` +
+    `• لو كمّلت بنفس الوتيرة، مصاريفك هتوصل آخر الشهر ≈ ${formatEgp(projected)}\n`;
+  if (ov.available > 0) {
+    text += `• المتاح بعد الالتزامات (${formatEgp(ov.available)}) هيكفّي تقريباً **${daysFunded} يوم** بالوتيرة دي\n`;
+  }
+  text += `\n(أرقام تقديرية على أساس المصروفات المسجلة بس)`;
+  return text;
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Daily smart brief (لمحة ذكية)
+// ------------------------------------------------------------------
+export async function getSmartBrief(userId = 1): Promise<string> {
+  const today = await getDailySummary(undefined, userId);
+  const month = await getMonthlySummary(undefined, userId);
+  const accounts = await getAccounts(userId);
+  const ov = await getObligationsOverview(userId);
+  const upcoming = await getUpcomingBills(userId, 14);
+  const debts = await getDebts(userId);
+  const goals = await getSavingsGoals(userId);
+  const budgetAlerts = await getBudgetAlertsText(userId);
+  const pace = await getSpendingPaceInfo(userId);
+  const total = accounts.reduce((s, a) => s + a.balance, 0);
+
+  const lines: string[] = [];
+  lines.push(`🧠 **لمحتك المالية الذكية** (${getTodayDateString()})`);
+  lines.push(``);
+  lines.push(`💵 إجمالي فلوسك: ${formatEgp(total)}`);
+  lines.push(
+    `   • الكاش: ${formatEgp(accounts.find((a) => a.name.includes("كاش") && !a.name.includes("فودافون"))?.balance || 0)}`
+  );
+  lines.push(
+    `   • البنك: ${formatEgp(accounts.find((a) => a.name.includes("بنك"))?.balance || 0)}`
+  );
+  lines.push(
+    `   • فودافون كاش: ${formatEgp(accounts.find((a) => a.name.includes("فودافون"))?.balance || 0)}`
+  );
+  lines.push(``);
+  lines.push(`📆 النهارده: دخل ${formatEgp(today.income)} / مصروف ${formatEgp(today.expense)}`);
+  lines.push(
+    `📊 الشهر: دخل ${formatEgp(month.income)} / مصروف ${formatEgp(month.expense)} / الصافي ${month.net >= 0 ? "+" : ""}${formatEgp(month.net)}`
+  );
+  lines.push(``);
+  if (upcoming.length > 0) {
+    lines.push(`🔔 فواتير قدامك (خلال 14 يوم):`);
+    for (const b of upcoming.slice(0, 5)) {
+      lines.push(`   • ${b.name}: ${formatEgp(b.amount)} (فاضل ${b.days_until_due} يوم)`);
+    }
+  } else {
+    lines.push(`🔔 مفيش فواتير مستحقة قريب ✅`);
+  }
+  const pendingDebts = (debts as Array<Record<string, unknown>>).filter(
+    (d) => d.status === "pending" && d.type === "i_owe"
+  );
+  if (pendingDebts.length > 0) {
+    lines.push(`💳 ديون مستحقة عليك: ${pendingDebts.slice(0, 3).map((d) => `${d.title} (${formatEgp(Math.max((Number(d.amount) || 0) - (Number(d.paid_amount) || 0), 0))})`).join("، ")}`);
+  }
+  lines.push(``);
+  lines.push(budgetAlerts.text);
+  lines.push(``);
+  lines.push(pace);
+  if ((goals as Array<Record<string, unknown>>).length > 0) {
+    lines.push(``);
+    lines.push(`🎯 أهدافك الحالية:`);
+    for (const g of (goals as Array<Record<string, unknown>>).slice(0, 3)) {
+      const current = Number(g.current_amount) || 0;
+      const target = Number(g.target_amount) || 0;
+      const pct = target > 0 ? Math.round((current / target) * 100) : 0;
+      lines.push(`   • ${g.title}: ${formatEgp(current)} من ${formatEgp(target)} (${pct}%)`);
+    }
+  }
+  lines.push(``);
+  lines.push(`أنا معاك في أي حاجة ❤️ — قولي «لمحتك» في أي وقت.`);
+  return lines.join("\n");
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Persistent habits memory (settings key "ai_habits")
+// ------------------------------------------------------------------
+interface HabitStore {
+  categories: Record<string, number>;
+  accounts: Record<string, number>;
+}
+
+async function readHabitStore(userId: number): Promise<HabitStore> {
+  const settings = await getSettings(userId);
+  try {
+    const parsed = JSON.parse(settings.ai_habits || "{}");
+    return {
+      categories: parsed.categories || {},
+      accounts: parsed.accounts || {},
+    };
+  } catch {
+    return { categories: {}, accounts: {} };
+  }
+}
+
+export async function updateHabitsWithAction(userId: number, action: ParsedAction): Promise<void> {
+  try {
+    const store = await readHabitStore(userId);
+    let kind = action.category || "أخرى";
+    if (action.type === "budget_set") kind = action.description || "أخرى";
+
+    if (kind && kind !== "أخرى") {
+      store.categories[kind] = (store.categories[kind] || 0) + 1;
+    }
+    if (action.accountName && !action.accountName.includes("تحويل")) {
+      store.accounts[action.accountName] = (store.accounts[action.accountName] || 0) + 1;
+    }
+
+    for (const key of ["categories", "accounts"] as const) {
+      const sorted = Object.entries(store[key]).sort((a, b) => b[1] - a[1]);
+      if (sorted.length > 8) {
+        const trimmed: Record<string, number> = {};
+        for (const [k, v] of sorted.slice(0, 8)) trimmed[k] = v;
+        store[key] = trimmed;
+      }
+    }
+
+    await updateSetting("ai_habits", JSON.stringify(store), userId);
+  } catch (e) {
+    console.error("Failed to update habits:", e instanceof Error ? e.message : e);
+  }
+}
+
+export async function getHabitsText(userId = 1): Promise<string> {
+  const store = await readHabitStore(userId);
+  const cats = Object.entries(store.categories).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const accs = Object.entries(store.accounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const parts: string[] = [];
+  if (cats.length) parts.push(`أكتر تصنيفاتك تكراراً: ${cats.map(([n, c]) => `${n} (${c} مرة)`).join("، ")}`);
+  if (accs.length) parts.push(`حساباتك المفضلة: ${accs.map(([n, c]) => `${n} (${c} مرة)`).join("، ")}`);
+  return parts.length ? parts.join(" — ") : "لسه بجمع عاداتك، سجّل عمليات وهافهمك أكتر";
+}
+
+// ------------------------------------------------------------------
+// ACTION_JSON helpers (shared between chat pipeline & receipt scan)
+// ------------------------------------------------------------------
+function toEgpNum(v: unknown): number {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return isFinite(n) ? n : 0;
+}
+
+function buildActionFromRaw(raw: Record<string, unknown>, accounts: Account[]): ParsedAction {
+  const type = (String(raw.type || "") || "expense") as ParsedActionType;
+  const amountEgp = toEgpNum(raw.amountEgp ?? raw.amount);
+  const amount = egpToPiastres(amountEgp);
+  const description = String(raw.description || "").trim() || "عملية";
+  const category = String(raw.category || "").trim() || "أخرى";
+  const accountNameRaw = String(raw.accountName || "").trim();
+
+  const cashAcc = accounts.find((a) => a.name.includes("كاش") && !a.name.includes("فودافون"));
+  const targetAcc =
+    accounts.find((a) => accountNameRaw && a.name.includes(accountNameRaw)) ||
+    cashAcc ||
+    accounts[0] ||
+    null;
+
+  let toAcc: Account | undefined;
+  if (type === "transfer") {
+    toAcc = accounts.find((a) => targetAcc && a.id !== targetAcc.id) || accounts[1];
+  }
+
+  const freq = String(raw.frequency || "");
+  const validFreq: Array<"weekly" | "monthly" | "quarterly" | "yearly"> = ["weekly", "monthly", "quarterly", "yearly"];
+  const dayOfMonthRaw = Number(raw.dayOfMonth);
+
+  return {
+    type,
+    amount,
+    amountEgp,
+    description,
+    category,
+    accountId: targetAcc?.id || 1,
+    accountName: targetAcc?.name || "الكاش",
+    toAccountId: toAcc?.id,
+    toAccountName: toAcc?.name,
+    personName: raw.personName ? String(raw.personName) : undefined,
+    dueDate: raw.dueDate ? String(raw.dueDate) : undefined,
+    debtKind: (["gam_eya", "i_owe", "owed_to_me"].includes(String(raw.debtKind)) ? (String(raw.debtKind) as ParsedAction["debtKind"]) : undefined),
+    frequency: validFreq.includes(freq as never) ? (freq as ParsedAction["frequency"]) : undefined,
+    dayOfMonth: isFinite(dayOfMonthRaw) && dayOfMonthRaw > 0 ? dayOfMonthRaw : undefined,
+    targetAmount: raw.targetAmountEgp !== undefined ? egpToPiastres(toEgpNum(raw.targetAmountEgp)) : undefined,
+    newAmount: type === "transaction_update" ? amount : undefined,
+    newCategory: type === "transaction_update" ? category : undefined,
+    transactionId: raw.transactionId ? Number(raw.transactionId) : undefined,
+    requiresConfirmation: true,
+    confirmationMessage: "",
+  };
+}
+
+// Extract ACTION_JSON from a model reply and build the ParsedAction (if any)
+export function parseActionReply(reply: string, accounts: Account[], fallbackText = ""): AssistantResponse {
+  if (!reply.includes("ACTION_JSON:")) return { text: reply };
+  const parts = reply.split("ACTION_JSON:");
+  const messageText = parts[0].trim() || fallbackText;
+  try {
+    const raw = JSON.parse(parts[1].trim());
+    if (raw && raw.error) {
+      return { text: (messageText && messageText !== fallbackText ? messageText + "\n" : "") + String(raw.error) };
+    }
+    const action = buildActionFromRaw(raw || {}, accounts);
+    action.confirmationMessage = messageText;
+    return { text: messageText, action };
+  } catch (e) {
+    console.error("Failed to parse action json", e);
+    return { text: reply };
+  }
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Receipt / notification scanning (vision)
+// ------------------------------------------------------------------
+export async function analyzeReceiptImage(imageDataUrl: string, userId = 1): Promise<AssistantResponse> {
+  const config = await getAiProviderConfig(userId);
+  const openai = await getOpenAIClient(userId);
+  if (!openai || !config.apiKey) {
+    throw new Error("الموديل غير مهيأ — حط API key من الإعدادات الأول");
+  }
+
+  const accounts = await getAccounts(userId);
+  const prompt =
+    `أنت محلل فواتير مصري. اقرأ الفاتورة/الإيصال في الصورة واستخرج عملية الشراء الرئيسية الواحدة.\n` +
+    `رجع JSON بس بالشكل ده:\n` +
+    `ACTION_JSON:{"type":"expense","amountEgp":رقم,"description":"وصف قصير بالعربي","category":"التصنيف"}\n` +
+    `التصنيف من: سوپرماركت / طعام ومشروبات / مواصلات وبنزين / فواتير والتزامات / صحة وعلاج / تسوق ومشتريات / أخرى.\n` +
+    `لو مش قادر تقرا الصورة رجع: ACTION_JSON:{"error":"..."}`;
+
+  const chatParams: Record<string, unknown> = {
+    model: config.model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: imageDataUrl } },
+        ],
+      },
+    ],
+    max_tokens: 800,
+  };
+  if (!/\/?o[134](-|$)/i.test(config.model)) {
+    chatParams.temperature = 0.1;
+  }
+  const completion = await openai.chat.completions.create(chatParams as never);
+  const reply = completion.choices[0]?.message?.content || "";
+  return parseActionReply(reply, accounts, "قريت الفاتورة، جاهز أسجلها:");
+}
+
+// ------------------------------------------------------------------
+// FEATURE: Bank / InstaPay / Vodafone notification → ParsedAction
+// ------------------------------------------------------------------
+export function notificationToAction(text: string, accounts: Account[]): ParsedAction | null {
+  const parsed = parseBankNotification(text);
+  if (!parsed || parsed.amountEgp <= 0) return null;
+
+  let acc = accounts.find((a) => a.name.includes(parsed.accountName));
+  if (!acc) {
+    acc =
+      parsed.accountName.includes("فودافون") || /فودافون|vodafone/i.test(parsed.sourceText)
+        ? accounts.find((a) => a.name.includes("فودافون")) || accounts[0]
+        : accounts.find((a) => a.name.includes("بنك")) || accounts[0];
+  }
+  if (!acc) return null;
+
+  const type: ParsedActionType = parsed.type === "income" ? "income" : parsed.type === "transfer" ? "transfer" : "expense";
+  return {
+    type,
+    amount: parsed.amount,
+    amountEgp: parsed.amountEgp,
+    description: parsed.description,
+    category: parsed.category,
+    accountId: acc.id,
+    accountName: acc.name,
+    requiresConfirmation: true,
+    confirmationMessage:
+      `قريت الإشعار البنكي ده 📲\n` +
+      `${type === "expense" ? "💸" : "💰"} ${parsed.amountEgp} جنيه\n` +
+      `📝 ${parsed.description} (${parsed.category})\n` +
+      `🏦 الحساب: ${acc.name}\n\nتأكيد التسجيل؟`,
+  };
+}
+
 // Local Egyptian Arabic Parser & Financial Query Engine
 export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): Promise<AssistantResponse> {
   const rawQuery = userPrompt.trim();
@@ -243,18 +598,38 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
   const bankAcc = accounts.find((a) => a.name.includes("بنك")) || accounts[1];
   const vfAcc = accounts.find((a) => a.name.includes("فودافون")) || accounts[2];
 
+  const hasRecurrenceHint = /كل\s*شهر|شهري|شهرية|دورية|يوم\s*[0-9٠-٩]{1,2}/i.test(query);
+
+  // 0. Bank / InstaPay / Vodafone Cash notification pasting:
+  // "قرأت إشعار البنك: تم خصم 200 ج.م من حسابك لدى المتجر..."
+  const isBankNotification =
+    /انستاباي|instapay|فودافون كاش|vodafone cash|vodafone|عزيزي العميل|تم خصم مبلغ|تم استلام مبلغ|خصم من حساب|حسابك الجاري|دفع فوري|حوالة فورية|عملية شراء|معاملة بنكية|اعتمادات|الأهلي|البنك الأهلي|cip|wallet|دفع إلكتروني|الكتروني/i.test(query);
+
+  if (isBankNotification) {
+    const action = notificationToAction(rawQuery, accounts);
+    if (action) {
+      return {
+        text: "وصلني الإشعار، جاهز أسجله كعملية:",
+        action,
+      };
+    }
+  }
+
   // 1. Check for Expense Recording Commands:
   // "سجل 75 جنيه سجائر", "صرفت ٢٠ جنيه لبن رايب", "دفعت ٥٠ بنزين", "اشتريت ب 30 شاي"
   const isExpenseCommand =
-    /^(سجل|صرفت|دفعت|اشتريت|ادفع|خصم)($|\s|[0-9])/i.test(query) ||
-    (/(جنيه|ج\.م)/.test(query) && /(سجائر|اكل|شرب|غدا|عشا|فطار|بنزين|مواصلات|تاكسي|اوبر|قهوة|شاي|سوبرماركت|لبن)/i.test(query));
+    (/^(سجل|صرفت|دفعت|اشتريت|ادفع|خصم)($|\s|[0-9])/i.test(query) ||
+      (/(جنيه|ج\.م)/.test(query) && /(سجائر|اكل|شرب|غدا|عشا|فطار|بنزين|مواصلات|تاكسي|اوبر|قهوة|شاي|سوبرماركت|لبن)/i.test(query))) &&
+    !/دين|قرض|سداد|مستحقات|هدف|ادخار|توفير/i.test(query) &&
+    !(hasRecurrenceHint && /فاتورة|اشتراك/i.test(query));
 
   const isIncomeCommand =
     /^(دخلت|جالي|قبضت|كسبت|استلمت|دخل|ايراد)($|\s|[0-9])/i.test(query) ||
     (/(صيانة|مرتب|شغل|ارباح|عمولة)/i.test(query) && /(دخلت|قبضت|جالي)/i.test(query));
 
   const isTransferCommand =
-    /^(حولت|حول|نقلت|انقل|ابعت|تحويل)($|\s|[0-9])/i.test(query);
+    /^(حولت|حول|نقلت|انقل|ابعت|تحويل)($|\s|[0-9])/i.test(query) &&
+    !/هدف|ادخار|توفير/i.test(query);
 
   if (isExpenseCommand && !isIncomeCommand && !isTransferCommand) {
     const amountNum = parseArabicNumber(query);
@@ -380,6 +755,365 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
     }
   }
 
+  // 3(b). "امسح آخر مصروف" / "ارجع آخر عملية" / "امسح عملية بنزين"
+  const isDeleteCommand =
+    /(امسح|احذف|حذف|اشيل|الغي|ارجع|رجع|رجّع|انسي)/i.test(query) &&
+    /(آخر|اخر|عملية|مصروف|دخل|معاملة|العمليات)/i.test(query);
+
+  if (isDeleteCommand) {
+    const recent = await getRecentTransactions(20, userId);
+    if (recent.length === 0) {
+      return { text: "مفيش عمليات مسجلة أقدر أمسحها خالص ✅" };
+    }
+    let target = recent[0];
+    const ctx = rawQuery.replace(/امسح|احذف|حذف|اشيل|الغي|ارجع|رجع|رجّع|انسي|آخر|اخر|العمليات|عملية|مصروف|معاملة|دخل/g, "");
+    const kw = ctx.trim().replace(/[\.،:؛]/g, "");
+    if (kw.length >= 2) {
+      const found = recent.find(
+        (t) => t.description.includes(kw) || t.category.includes(kw) || t.description.includes(kw.replace(/شهر|يوم|النهارده/g, ""))
+      );
+      if (found) target = found;
+    }
+    return {
+      text: "جاهز أمسح العملية دي:",
+      action: {
+        type: "transaction_delete",
+        amount: 0,
+        amountEgp: 0,
+        description: `${target.description} (${target.category})`,
+        category: target.category,
+        accountId: target.account_id,
+        accountName: target.account_name || "",
+        transactionId: target.id,
+        requiresConfirmation: true,
+        confirmationMessage: `هحذف العملية 🗑️\n📝 ${target.description} (${target.category})\n💰 ${formatEgp(target.amount)}\n📅 ${target.date}\n\nمتأكد من الحذف؟`,
+      },
+    };
+  }
+
+  // 3(c). "مش بنزين ده سوبر" → تصحيح آخر عملية
+  const correctionMatch = rawQuery.match(/مش\s+(\S+)\s+(?:ده|دي)\s+(.+)/i);
+  if (correctionMatch) {
+    const recent = await getRecentTransactions(10, userId);
+    if (recent.length === 0) {
+      return { text: "مفيش عمليات أقدر أعدلها ✅" };
+    }
+    const target = recent[0];
+    const newDesc = correctionMatch[2].trim();
+    let newCategory = "أخرى";
+    if (/سجائر|دخان|شيشة/i.test(newDesc)) newCategory = "سجائر";
+    else if (/اكل|طعام|شرب|غدا|عشا|فطار|قهوة|شاي|سوبرماركت|سوبر|لبن|مطعم|كافيه/i.test(newDesc)) newCategory = "طعام ومشروبات";
+    else if (/بنزين|مواصلات|تاكسي|اوبر|مترو|ميكروباص/i.test(newDesc)) newCategory = "مواصلات وبنزين";
+    else if (/فاتورة|نت|كهربا|غاز|مياه|ايجار/i.test(newDesc)) newCategory = "فواتير والتزامات";
+    else if (/دوا|صيدلية|دكتور|علاج|مستشفى/i.test(newDesc)) newCategory = "صحة وعلاج";
+    else if (/هدوم|ملابس|تسوق|شراء|مول/i.test(newDesc)) newCategory = "تسوق ومشتريات";
+
+    return {
+      text: "تمام، هعدّل العملية دي:",
+      action: {
+        type: "transaction_update",
+        amount: 0,
+        amountEgp: 0,
+        description: newDesc,
+        category: newCategory,
+        accountId: target.account_id,
+        accountName: target.account_name || "",
+        transactionId: target.id,
+        requiresConfirmation: true,
+        confirmationMessage:
+          `تصحيح آخر عملية ✏️\n` +
+          `القديم: ${target.description} (${target.category}) — ${formatEgp(target.amount)}\n` +
+          `الجديد: ${newDesc} (${newCategory})\n\n` +
+          `(المبلغ والأصل هيفضلوا زي ما هما)\nتأكيد التعديل؟`,
+      },
+    };
+  }
+
+  // 3(d). Debts: إنشاء / سداد / حذف
+  const personName = extractPersonName(rawQuery);
+  const debtCreatePattern =
+    /(ضيف\s*دين|اضيف\s*دين|سجل\s*دين|دين\s+جديد|استلفت|سلفت\s*من|اقترضت|اقرَضتُ|عليا\s+دين|بقيت\s+مديون|سلفني|اقرضني)/i;
+
+  if (debtCreatePattern.test(query)) {
+    const amountNum = parseArabicNumber(query);
+    if (amountNum && amountNum > 0) {
+      let debtKind: ParsedAction["debtKind"] = "i_owe";
+      if (/جامعية|جمعية|جامعيه|جمعيه/i.test(query)) debtKind = "gam_eya";
+      else if (/مديني|عنده\s+عندي|مستحق\s+لي|دين\s+لي|بستلفني|تسدلي|مداين/i.test(query)) debtKind = "owed_to_me";
+
+      let dueDate: string | undefined;
+      const dueMatch = query.match(/بعد\s+(\d{1,3})\s*يوم/i);
+      if (dueMatch) {
+        const d = new Date();
+        d.setDate(d.getDate() + Number(dueMatch[1]));
+        dueDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      }
+      const desc = `دين${personName ? `: ${personName}` : ""}`;
+      const kindLabel = debtKind === "gam_eya" ? "جامعية (جمعية)" : debtKind === "owed_to_me" ? "دين مستحق لك" : "دين عليك";
+      return {
+        text: "وصلني، جاهز أسجل الدين:",
+        action: {
+          type: "debt_create",
+          amount: egpToPiastres(amountNum),
+          amountEgp: amountNum,
+          description: desc,
+          category: "ديون وقروض",
+          accountId: cashAcc.id,
+          accountName: cashAcc.name,
+          personName,
+          debtKind,
+          dueDate,
+          requiresConfirmation: true,
+          confirmationMessage:
+            `${kindLabel} 💳\n` +
+            `💵 ${amountNum} جنيه\n` +
+            `📝 ${desc}\n` +
+            `${dueDate ? `📅 مستحق: ${dueDate}\n` : ""}` +
+            `تأكيد الحفظ؟`,
+        },
+      };
+    }
+  }
+
+  const isDebtPaymentPattern =
+    /(سددت|سدد|بسدد|دفعت|اديت|ودعت|سداد|دفعة|دفعات)/i.test(query) &&
+    /(دين|مستحقات|اللي\s*عليا|قرض)/i.test(query) &&
+    /[0-9٠-٩]/.test(query);
+
+  if (isDebtPaymentPattern) {
+    const amountNum = parseArabicNumber(query);
+    const debts = await getDebts(userId);
+    const pending = (debts as Array<Record<string, unknown>>).filter(
+      (d) => d.status === "pending" && d.type === "i_owe"
+    );
+    if (pending.length === 0) return { text: "مفيش ديون مستحقة عليك عشان تسددها ✅" };
+    let target = pending[0];
+    if (personName) {
+      const found = pending.find(
+        (d) =>
+          String(d.person_name || "").includes(personName) ||
+          String(d.title).includes(personName)
+      );
+      if (found) target = found;
+    }
+    const remaining = Math.max((Number(target.amount) || 0) - (Number(target.paid_amount) || 0), 0);
+    if (!amountNum || amountNum <= 0) {
+      return {
+        text: `تمام، الدين ده باقي منه ${formatEgp(remaining)} — قولي المبلغ اللي هتدفعه.`,
+      };
+    }
+    const paidAfter = (Number(target.paid_amount) || 0) + egpToPiastres(amountNum);
+    return {
+      text: "تمام، هسجل الدفعة دي:",
+      action: {
+        type: "debt_payment",
+        amount: egpToPiastres(amountNum),
+        amountEgp: amountNum,
+        description: String(target.title),
+        category: "ديون وقروض",
+        accountId: cashAcc.id,
+        accountName: cashAcc.name,
+        personName,
+        entityId: Number(target.id),
+        requiresConfirmation: true,
+        confirmationMessage:
+          `سداد دين 💳\n` +
+          `📝 ${target.title}\n` +
+          `💵 ${amountNum} جنيه (هيتبقى ${formatEgp(Math.max(remaining - egpToPiastres(amountNum), 0))})\n` +
+          `تأكيد السداد؟`,
+      },
+    };
+  }
+
+  const isDebtDeleteCommand = /(امسح|احذف|اشيل|الغي)\s*(الدين|دين)/i.test(query);
+  if (isDebtDeleteCommand) {
+    const debts = await getDebts(userId);
+    const pending = (debts as Array<Record<string, unknown>>).filter(
+      (d) => d.type === "i_owe" || d.type === "owed_to_me"
+    );
+    if (pending.length === 0) return { text: "مفيش ديون تحذفها ✅" };
+    let target = pending[0];
+    if (personName) {
+      const found = pending.find(
+        (d) =>
+          String(d.person_name || "").includes(personName) ||
+          String(d.title).includes(personName)
+      );
+      if (found) target = found;
+    }
+    return {
+      text: "جاهز أمسح الدين:",
+      action: {
+        type: "debt_delete",
+        amount: 0,
+        amountEgp: 0,
+        description: String(target.title),
+        category: "ديون وقروض",
+        accountId: cashAcc.id,
+        accountName: cashAcc.name,
+        personName,
+        entityId: Number(target.id),
+        requiresConfirmation: true,
+        confirmationMessage: `هحذف الدين 🗑️\n📝 ${target.title} (${formatEgp(Math.max((Number(target.amount) || 0) - (Number(target.paid_amount) || 0), 0))})\n\nمتأكد؟`,
+      },
+    };
+  }
+
+  // 3(e). Savings goals: إنشاء / إيداع / حذف
+  const goalCreatePattern =
+    /(اعمل|انشئ|انشا|ضيف|ابدأ|نشئ|اسعى)\s*(هدف|ادخار|توفير)|عايز\s*اوفر\s+\d|هدف\s*(توفير|ادخار)\s*\d|استهدف\s+\d|نفسي\s*اوفر\s+\d/i;
+
+  if (goalCreatePattern.test(query)) {
+    const amountNum = parseArabicNumber(query);
+    if (amountNum && amountNum > 0) {
+      let title = "هدف ادخار";
+      const titleMatch = rawQuery.match(/(?:لل|لـ|ل)([\u0600-\u06FF]{2,})/i);
+      if (titleMatch) title = `ادخار: ${titleMatch[1]}`;
+      const forTarget = rawQuery.match(/هدف\s+توفير\s+[\d\.]+\s*([\u0600-\u06FF]{1,})/i);
+      if (forTarget) title = `ادخار: ${forTarget[1]}`;
+      return {
+        text: "هدف جميل! جاهز أعمل الهدف:",
+        action: {
+          type: "savings_goal_create",
+          amount: 0,
+          amountEgp: 0,
+          description: title,
+          category: "ادخار",
+          accountId: cashAcc.id,
+          accountName: cashAcc.name,
+          targetAmount: egpToPiastres(amountNum),
+          requiresConfirmation: true,
+          confirmationMessage: `هدف ادخار جديد 🎯\n📝 ${title}\n💵 الهدف: ${amountNum} جنيه\n\nتأكيد إنشاء الهدف؟`,
+        },
+      };
+    }
+  }
+
+  const isDepositToGoal =
+    /(ودعت|حطيت|حولت|ضيف|اديت|بقي)\s*(في|لل|على|ل)?\s*(الهدف|هدف)/i.test(query) ||
+    (/(هدف|ادخار)/i.test(query) && /(ودعت|حولت|ضيف|حطيت)/i.test(query));
+
+  if (isDepositToGoal) {
+    const amountNum = parseArabicNumber(query);
+    const goals = await getSavingsGoals(userId);
+    if (goals.length === 0) return { text: "مفيش أهداف ادخار لسه — قولي «اعمل هدف توفير 5000» وهاعملهولك 🎯" };
+    let target = (goals as Array<Record<string, unknown>>)[0];
+    const kwMatch = rawQuery.match(/هدف\s*([\u0600-\u06FF]{1,})/i);
+    if (kwMatch) {
+      const found = (goals as Array<Record<string, unknown>>).find((g) =>
+        String(g.title).includes(kwMatch[1])
+      );
+      if (found) target = found;
+    }
+    if (!amountNum || amountNum <= 0) {
+      return { text: `قولي المبلغ اللي هتحوله لهدف «${target.title}» 🎯` };
+    }
+    return {
+      text: "تمام، هودّع للهدف:",
+      action: {
+        type: "savings_deposit",
+        amount: egpToPiastres(amountNum),
+        amountEgp: amountNum,
+        description: String(target.title),
+        category: "ادخار",
+        accountId: cashAcc.id,
+        accountName: cashAcc.name,
+        entityId: Number(target.id),
+        requiresConfirmation: true,
+        confirmationMessage:
+          `إيداع في هدف الادخار 🎯\n📝 ${target.title}\n💵 ${amountNum} جنيه\n(المبلغ من ${cashAcc.name})\n\nتأكيد الإيداع؟`,
+      },
+    };
+  }
+
+  const isGoalDeleteCommand = /(امسح|احذف|اشيل)\s*(الهدف|هدف)/i.test(query);
+  if (isGoalDeleteCommand) {
+    const goals = await getSavingsGoals(userId);
+    if (goals.length === 0) return { text: "مفيش أهداف تحذفها ✅" };
+    const target = (goals as Array<Record<string, unknown>>)[0];
+    return {
+      text: "جاهز أمسح الهدف:",
+      action: {
+        type: "savings_goal_delete",
+        amount: 0,
+        amountEgp: 0,
+        description: String(target.title),
+        category: "ادخار",
+        accountId: cashAcc.id,
+        accountName: cashAcc.name,
+        entityId: Number(target.id),
+        requiresConfirmation: true,
+        confirmationMessage: `هحذف هدف «${target.title}» 🗑️\n(المبلغ المحفوظ فيه: ${formatEgp(Number(target.current_amount) || 0)})\nمتأكد؟`,
+      },
+    };
+  }
+
+  // 3(f). فواتير دورية
+  const billPattern =
+    /(ضيف|اضيف|حط|احط|اضف|أضف|سجل|انشئ|اسجل|خطط)\s*(فاتورة|اشتراك)|فاتورة\s*(جديدة|دورية|شهرية|سنوية|اسبوعية|دي)|اشتراك\s*شهري|عندي\s*فاتورة/i;
+
+  if (billPattern.test(query) || (hasRecurrenceHint && /فاتورة|اشتراك/i.test(query))) {
+    const amountNum = parseArabicNumber(query);
+    if (amountNum && amountNum > 0) {
+      let billName = "فاتورة دورية";
+      const nameMatch = rawQuery.match(/فاتورة\s+([\u0600-\u06FF]{2,})/i) || rawQuery.match(/([\u0600-\u06FF]{2,})\s*فاتورة/i);
+      if (nameMatch) billName = nameMatch[1];
+      const freq = /اسبوع/i.test(query) ? ("weekly" as const) : /سنوي|كل\s*سنة/i.test(query) ? ("yearly" as const) : /ربع\s*سنوي/i.test(query) ? ("quarterly" as const) : ("monthly" as const);
+      const dayMatch = query.match(/يوم\s*(\d{1,2})/i);
+      const dayOfMonth = dayMatch ? Number(dayMatch[1]) : 1;
+      const dueDate = computeNextDueDate(dayOfMonth);
+      const freqLabel = freq === "weekly" ? "أسبوعي" : freq === "yearly" ? "سنوي" : freq === "quarterly" ? "كل 3 شهور" : "شهري";
+      return {
+        text: "تمام، هضيف الفاتورة الدورية:",
+        action: {
+          type: "bill_create",
+          amount: egpToPiastres(amountNum),
+          amountEgp: amountNum,
+          description: billName,
+          category: "فواتير والتزامات",
+          accountId: cashAcc.id,
+          accountName: cashAcc.name,
+          frequency: freq,
+          dayOfMonth,
+          dueDate,
+          requiresConfirmation: true,
+          confirmationMessage:
+            `فاتورة دورية 🧾\n📝 ${billName}\n💵 ${amountNum} جنيه\n🔄 ${freqLabel} (يوم ${dayOfMonth})\n📅 أول استحقاق: ${dueDate}\n\nتأكيد الإضافة؟`,
+        },
+      };
+    }
+  }
+
+  // 3(g). حدود الميزانية
+  const budgetSetPattern = /(حد\s*مصروف|حد\s*شهري|حد\s*ل|بجيت|ميزانية\s*ل|حدد\s*حد|ضع\s*حد|حط\s*حد)/i;
+
+  if (budgetSetPattern.test(query)) {
+    const amountNum = parseArabicNumber(query);
+    if (amountNum && amountNum > 0) {
+      let cat = "أخرى";
+      if (/سجائر|دخان/i.test(query)) cat = "سجائر";
+      else if (/اكل|طعام|شرب|مطعم|غدا|عشا|فطار|قهوة|شاي|سوبر/i.test(query)) cat = "طعام ومشروبات";
+      else if (/بنزين|مواصلات|تاكسي|اوبر/i.test(query)) cat = "مواصلات وبنزين";
+      else if (/فواتير|نت|كهربا|غاز|مياه|ايجار|اشتراكات/i.test(query)) cat = "فواتير والتزامات";
+      else if (/دوا|صيدلية|صحة|علاج/i.test(query)) cat = "صحة وعلاج";
+      else if (/تسوق|هدوم|ملابس|شراء|مول/i.test(query)) cat = "تسوق ومشتريات";
+      return {
+        text: "تمام، هحدد الميزانية:",
+        action: {
+          type: "budget_set",
+          amount: egpToPiastres(amountNum),
+          amountEgp: amountNum,
+          description: cat,
+          category: cat,
+          accountId: cashAcc.id,
+          accountName: cashAcc.name,
+          requiresConfirmation: true,
+          confirmationMessage: `حد مصاريف شهرية 📊\n📝 التصنيف: ${cat}\n💵 الحد الشهري: ${amountNum} جنيه\n\nتأكيد؟`,
+        },
+      };
+    }
+  }
+
   // 4. Financial Query Answering:
   // "معايا كام؟", "رصيدي كام؟", "إجمالي فلوسي"
   if (/معايا كام|رصيدي كام|اجمالي فلوسي|فلوسي كام|كل الفلوس/i.test(query)) {
@@ -457,6 +1191,20 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
     return {
       text: `إجمالي إيراد العمولات الشهر ده:\n💼 ${formatEgp(month.maintenanceIncome)}\nمن إجمالي دخل شهري قدره: ${formatEgp(month.income)}`,
     };
+  }
+
+  // "لمحة ذكية" / "وتيرة الصرف" / "تنبيهات الميزانية"
+  if (/لمحة|لمحه|لمحتي|لمحتى|برايف|بروفايل|تقرير\s+شامل|موقفي\s+الكامل|صورة\s+كاملة|صوره\s+كامله/i.test(query)) {
+    return { text: await getSmartBrief(userId) };
+  }
+
+  if (/تنبيهات|الميزانية\s+كام|الحدود\s+كام|عدى\s+الحد|عديت\s+الحد|تعدي؟ت\s*الحد|فين\s*باقي\s*الحد|باقي\s*من\s*الحد|خلصت\s*الحد|قرب\s*تعدي/i.test(query)) {
+    const alerts = await getBudgetAlertsText(userId);
+    return { text: `تنبيهات الميزانية الشهرية 🚨\n\n${alerts.text}` };
+  }
+
+  if (/وتيرة|معدل\s+الصرف|هخلص\s+الشهر|هكمل\s+الشهر|ادام\s+كام\s+يوم|على\s+وتيرة|تكفيني\s+كام\s+يوم|بكفي|هوصل\s+اخر\s+الشهر|امتى\s+هخلص/i.test(query)) {
+    return { text: await getSpendingPaceInfo(userId) };
   }
 
   // "ملخص الأسبوع" / "ملخص الشهر"
@@ -589,6 +1337,12 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
       const topExpenses = await getExpenseCategoriesBreakdown(undefined, userId);
       const recent = await getRecentTransactions(5, userId);
       const obligations = await getObligationsOverview(userId);
+      const budgetAlerts = await getBudgetAlertsText(userId);
+      const paceInfo = await getSpendingPaceInfo(userId);
+      const habitsText = await getHabitsText(userId);
+      const upcomingBills = await getUpcomingBills(userId, 30);
+      const debtsList = await getDebts(userId);
+      const goalsList = await getSavingsGoals(userId);
       // Load previous conversation turns for memory
       const history = await getConversationHistory(userId, 20);
 
@@ -609,22 +1363,39 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 - آخر العمليات: ${JSON.stringify(recent.map(r => ({ type: r.type, amount: piastresToEgp(r.amount), desc: r.description, date: r.date })))}
 - إجمالي الالتزامات المسجلة الشهر ده (فواتير دورية + ديون مستحقة): ${piastresToEgp(obligations.totalObligations)} جنيه (${obligations.billsUpcoming.map(b => b.name + ": " + piastresToEgp(b.amount)).join("، ")}${obligations.debtsPending.length > 0 ? " و" + obligations.debtsPending.map(d => d.title + ": " + piastresToEgp(d.amount)).join("، ") : ""})
 - المتاح بعد الالتزامات: ${piastresToEgp(Math.max(obligations.available, 0))} جنيه
+- تنبيهات الميزانية: ${budgetAlerts.text.replace(/\n/g, " | ")}
+- وتيرة الصرف: ${paceInfo.replace(/\n/g, " | ")}
+- عادات المستخدم المتكررة: ${habitsText}
+- فواتير قادمة (30 يوم): ${upcomingBills.length ? upcomingBills.map((b) => `${b.name} ${piastresToEgp(b.amount)} (فاضل ${b.days_until_due} يوم)`).join("، ") : "لا يوجد"}
+- ديون معلقة: ${debtsList && debtsList.length ? debtsList.filter((d) => d.status === "pending").map((d) => `${d.title}: ${piastresToEgp(Math.max((Number(d.amount) || 0) - (Number(d.paid_amount) || 0), 0))}`).join("، ") : "لا يوجد"}
+- أهداف الادخار: ${goalsList && goalsList.length ? goalsList.map((g) => `${g.title} (${piastresToEgp(Number(g.current_amount) || 0)} من ${piastresToEgp(Number(g.target_amount) || 0)})`).join("، ") : "لا يوجد"}
 
 القواعد الإلزامية:
-1. لو المستخدم طلب تسجيل مصروف أو دخل أو تحويل:
-   - استخرج نوع العملية (expense / income / transfer)
-   - المبلغ بالجنيه
-   - الوصف والتصنيف
-   - الحساب (كاش / بنك / فودافون كاش)
-   - رد بصيغة تأكيد واضحة تطلب موافقته قبل التنفيذ:
-   "هسجل: [المبلغ] جنيه [الوصف] من [الحساب]. تأكيد؟"
-   ورجع JSON في نهاية رسالتك بالشكل التالي:
-   ACTION_JSON:{"type":"expense|income|transfer","amount":المبلغ_بالجنيه,"description":"...","category":"...","accountName":"الكاش|البنك|فودافون كاش"}
-2. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.
-3. افتكر سياق المحادثة السابقة (الأسئلة السابقة وردودك) وفيه ردودك والإجراءات اللي حصلت، وخلي ردودك متسقة مع المحادثة. لو سألك شيء زي "وأيه تاني / إزاي؟" اعرف إنه بيكمل على آخر سؤال.
-4. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.
-5. لو سأل «المتاح كام؟» أو «اقدر أصرف كام؟»: اعتمد رقم «المتاح بعد الالتزامات» واذكر الالتزامات المسجلة (أسماء المبالغ) اللي داخلة في الخصم.
-6. لو سأل «لو صرفت [مبلغ]؟» أو «هقدر أدفع كام؟»: اعرض أثر القرار للأرقام بس (الرصيد الحالي، الالتزامات القادمة، المتاح بعدها، وبعد المصروف المذكور) من غير ما تحكم «اشتري/ماتشتريش»، واضيف دايماً إن النتيجة مبنية على البيانات المسجلة ولو فيه مصاريف غير مسجلة الرقم يختلف.`;
+1. لو المستخدم طلب تسجيل عملية مالية (مصروف / دخل / تحويل) أو إدارة مالية (دين / هدف ادخار / فاتورة دورية / حد ميزانية / حذف أو تصحيح عملية):
+   - استخرج نوع العملية من القايمة اللي تحت
+   - رد بصيغة تأكيد واضحة باللهجة المصرية تطلب موافقته قبل التنفيذ
+   - ورجع ACTION_JSON واحد بس في نهاية رسالتك بالشكل التالي:
+   ACTION_JSON:{"type":"...","amountEgp":المبلغ_بالجنيه,"description":"...","category":"...","accountName":"الكاش|البنك|فودافون كاش",بقية_الحقول}
+   الأنواع الممكنة:
+   - expense / income / transfer: عملية عادية (amountEgp مطلوب)
+   - debt_create: إضافة دين — amountEgp + description (عنوان الدين) + personName (اسم الشخص اختياري) + debtKind من ("i_owe" دين عليك | "owed_to_me" دين مستحق لك | "gam_eya" جامعية/جمعية) + dueDate اختياري بصيغة YYYY-MM-DD
+   - debt_payment: سداد دفعة من دين — amountEgp + description (عنوان الدين أو اسم الشخص)
+   - debt_delete: حذف دين — description (عنوان الدين)
+   - savings_goal_create: هدف ادخار جديد — targetAmountEgp (الهدف الكلي بالجنيه) + description (اسم الهدف)
+   - savings_deposit: إيداع في هدف — amountEgp + description (اسم الهدف)
+   - savings_goal_delete: حذف هدف — description (اسم الهدف)
+   - bill_create: فاتورة دورية — amountEgp + description (اسمها) + frequency من ("weekly"|"monthly"|"quarterly"|"yearly") + dayOfMonth (رقم اليوم 1-28 يعني آخر الشهر) + accountName اختياري
+   - budget_set: حد مصروف شهري لتصنيف — amountEgp (الحد الشهري) + description (اسم التصنيف)
+   - transaction_delete: حذف آخر عملية أو عملية معينة — description (وصفها أو كلمة «آخر») + transactionId لو عارف رقمها
+   - transaction_update: تصحيح عملية — description (الوصف الجديد) + category (التصنيف الجديد) + amountEgp (المبلغ الجديد اختياري) + transactionId لو معروف
+2. لو أرسل لك نص إشعار بنكي / انستاباي / فودافون كاش (زي «عزيزي العميل» أو «تم خصم مبلغ»): حلل المبلغ والجهة والحساب وارجع ACTION_JSON expense/income/transfer ببيانات الإشعار مباشرة بدل ما تعتبره كلام عادي.
+3. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.
+4. افتكر سياق المحادثة السابقة (الأسئلة السابقة وردودك) وفيه ردودك والإجراءات اللي حصلت، وخلي ردودك متسقة مع المحادثة. لو سألك شيء زي "وأيه تاني / إزاي؟" اعرف إنه بيكمل على آخر سؤال.
+5. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.
+6. لو سأل «المتاح كام؟» أو «اقدر أصرف كام؟»: اعتمد رقم «المتاح بعد الالتزامات» واذكر الالتزامات المسجلة (أسماء المبالغ) اللي داخلة في الخصم.
+7. لو سأل «لو صرفت [مبلغ]؟» أو «هقدر أدفع كام؟»: اعرض أثر القرار للأرقام بس (الرصيد الحالي، الالتزامات القادمة، المتاح بعدها، وبعد المصروف المذكور) من غير ما تحكم «اشتري/ماتشتريش»، واضيف دايماً إن النتيجة مبنية على البيانات المسجلة ولو فيه مصاريف غير مسجلة الرقم يختلف.
+8. لو سأل «لمحة» أو «برايف» أو «وتيرة الصرف» أو «تنبيهات الميزانية»: استخدم البيانات الموجودة أعلاه (تنبيهات الميزانية / وتيرة الصرف / الفواتير القادمة / الأهداف) ورد بشكل كامل منظم ومفيد.
+9. العادات المتكررة موجودة في سطر «عادات المستخدم المتكررة» — اعتمدها لو اتسألت عن نمط صرفك.`;
 
       const chatParams: Record<string, unknown> = {
         model: config.model,
@@ -643,46 +1414,8 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 
       const reply = completion.choices[0]?.message?.content || "";
 
-      // Check if ACTION_JSON was returned
-      if (reply.includes("ACTION_JSON:")) {
-        const parts = reply.split("ACTION_JSON:");
-        const messageText = parts[0].trim();
-        try {
-          const actionRaw = JSON.parse(parts[1].trim());
-          const amountEgp = Number(actionRaw.amount);
-          const piastres = egpToPiastres(amountEgp);
-
-          const targetAcc = accounts.find((a) => a.name.includes(actionRaw.accountName)) || accounts[0];
-          let toAcc: (typeof accounts)[number] | undefined = undefined;
-          if (actionRaw.type === "transfer") {
-            toAcc = accounts.find((a) => a.id !== targetAcc.id) || accounts[1];
-          }
-
-          const action: ParsedAction = {
-            type: actionRaw.type,
-            amount: piastres,
-            amountEgp,
-            description: actionRaw.description || (actionRaw.type === "expense" ? "مصروف" : "دخل"),
-            category: actionRaw.category || "أخرى",
-            accountId: targetAcc.id,
-            accountName: targetAcc.name,
-            toAccountId: toAcc?.id,
-            toAccountName: toAcc?.name,
-            requiresConfirmation: true,
-            confirmationMessage: messageText,
-          };
-
-          result = {
-            text: messageText,
-            action,
-          };
-        } catch (e) {
-          console.error("Failed to parse action json", e);
-          result = { text: reply };
-        }
-      } else {
-        result = { text: reply };
-      }
+      // Check for ACTION_JSON (parses both old & new action types)
+      result = parseActionReply(reply, accounts);
     } catch (error) {
       console.error("OpenAI call failed, falling back to local Egyptian parser", error);
       const msg = error instanceof Error ? error.message : "";

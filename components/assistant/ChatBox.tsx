@@ -14,6 +14,7 @@ import {
   MicOff,
   Volume2,
   VolumeX,
+  Camera,
 } from "lucide-react";
 import { ParsedAction, formatEgp } from "@/lib/types";
 
@@ -35,7 +36,7 @@ export default function ChatBox() {
       id: "welcome-1",
       role: "assistant",
       content:
-        "أهلاً بيك يا فندم! 🤖 أنا المساعد المالي الشخصي بتاعك.\n\nتقدر تسألني أي سؤال عن فلوسك، أو تطلب مني أسجل لك مصاريفك أو إيراداتك مباشرة بالكلام العادي (كتابة أو بالصوت 🎙️)، زي:\n• «صرفت كام النهارده؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n• «معايا كام في البنك؟»\n• «أكتر حاجة بصرف عليها إيه؟»",
+        "أهلاً بيك يا فندم! 🤖 أنا المساعد المالي الشخصي بتاعك.\n\nتقدر تسألني أي سؤال عن فلوسك، أو تطلب مني أسجل لك مصاريفك أو إيراداتك مباشرة بالكلام العادي (كتابة أو بالصوت 🎙️)، زي:\n• «صرفت كام النهارده؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n• «ضيف دين 300 لمحمد»\n• «اعمل هدف توفير 5000»\n• «حط حد لسجائر 400»\n• «امسح آخر مصروف»\n• «لمحتي المالية»\n\nوكمان هقدر أقرالك إشعار بنك أو انستاباي تلصقه هنا 📲، وتلتقط لي صورة فاتورة بالكاميرا وأنا أسجلها لك وحدي 📷.",
       createdAt: new Date().toLocaleTimeString("ar-EG", {
         hour: "2-digit",
         minute: "2-digit",
@@ -54,6 +55,7 @@ export default function ChatBox() {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize Speech Recognition (Web Speech API)
   useEffect(() => {
@@ -109,6 +111,62 @@ export default function ChatBox() {
       } catch (err) {
         console.error("Failed to start speech recognition", err);
       }
+    }
+  }
+
+  // Scan a receipt / invoice photo with AI vision
+  async function handleScanFile(file: File) {
+    if (!file || loading) return;
+    setLoading(true);
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("تعذر قراءة الصورة"));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch("/api/assistant/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageDataUrl: dataUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "معرفهتش أقرا الفاتورة");
+
+      const botMsgId = "a-" + Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: botMsgId,
+          role: "assistant",
+          content: data.text || "قرأت الفاتورة، جاهز أسجلها:",
+          action: data.action,
+          actionStatus: data.action ? "pending" : undefined,
+          createdAt: new Date().toLocaleTimeString("ar-EG", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+      if (autoSpeak && data.text) speakText(data.text, botMsgId);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : "حدث خطأ أثناء قراءة الفاتورة";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: "err-" + Date.now(),
+          role: "assistant",
+          content: `عذراً، ${errMsg}`,
+          createdAt: new Date().toLocaleTimeString("ar-EG", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -314,12 +372,62 @@ export default function ChatBox() {
   const quickChips = [
     "صرفت كام النهارده؟",
     "معايا كام؟",
-    "رصيدي في البنك كام؟",
     "سجل 75 جنيه سجائر",
     "دخلت 600 عمولة",
-    "أكتر حاجة بصرف عليها إيه؟",
-    "حولت 500 للبنك",
+    "ضيف دين 300 لمحمد",
+    "اعمل هدف توفير 5000",
+    "حط حد لسجائر 400",
+    "امسح آخر مصروف",
+    "المتاح بعد الالتزامات كام؟",
+    "لمحتي المالية",
+    "وتيرة صرفي",
+    "تنبيهات الميزانية",
   ];
+
+  const actionTypeLabel = (type: string): string => {
+    const map: Record<string, string> = {
+      expense: "مصروف",
+      income: "دخل",
+      transfer: "تحويل",
+      debt_create: "دين جديد",
+      debt_payment: "دفعة دين",
+      debt_delete: "حذف دين",
+      savings_goal_create: "هدف ادخار",
+      savings_deposit: "إيداع هدف",
+      savings_goal_delete: "حذف هدف",
+      bill_create: "فاتورة دورية",
+      budget_set: "حد ميزانية",
+      transaction_delete: "حذف عملية",
+      transaction_update: "تصحيح عملية",
+    };
+    return map[type] || "عملية";
+  };
+
+  const actionTypeColor = (type: string): string => {
+    if (type === "expense") return "bg-rose-500/20 text-rose-400";
+    if (type === "income") return "bg-emerald-500/20 text-emerald-400";
+    if (type === "transfer") return "bg-blue-500/20 text-blue-400";
+    return "bg-indigo-500/20 text-indigo-300";
+  };
+
+  const actionAmountLabel = (type: string): string => {
+    if (type === "savings_goal_create") return "الهدف المطلوب";
+    if (type === "budget_set") return "الحد الشهري";
+    return "المبلغ";
+  };
+
+  const NO_AMOUNT_TYPES = new Set([
+    "transaction_delete",
+    "savings_goal_delete",
+    "debt_delete",
+  ]);
+  const SHOW_ACCOUNT_TYPES = new Set([
+    "expense",
+    "income",
+    "transfer",
+    "debt_payment",
+    "savings_deposit",
+  ]);
 
   return (
     <div className="flex flex-col h-[75vh] glass-card rounded-3xl overflow-hidden border border-slate-800 shadow-2xl">
@@ -419,46 +527,53 @@ export default function ChatBox() {
                     <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
                       <span className="font-bold text-indigo-300 flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5" />
-                        طلب تسجيل عملية مالية
+                        {m.action.type === "transaction_delete" ||
+                        m.action.type === "debt_delete" ||
+                        m.action.type === "savings_goal_delete"
+                          ? "طلب حذف"
+                          : m.action.type === "transaction_update"
+                          ? "اقتراح تعديل"
+                          : "طلب تسجيل عملية مالية"}
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          m.action.type === "expense"
-                            ? "bg-rose-500/20 text-rose-400"
-                            : m.action.type === "income"
-                            ? "bg-emerald-500/20 text-emerald-400"
-                            : "bg-blue-500/20 text-blue-400"
-                        }`}
+                        className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${actionTypeColor(m.action.type)}`}
                       >
-                        {m.action.type === "expense"
-                          ? "مصروف"
-                          : m.action.type === "income"
-                          ? "دخل"
-                          : "تحويل"}
+                        {actionTypeLabel(m.action.type)}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-slate-400 block text-[10px]">المبلغ:</span>
-                        <span className="font-black text-white text-base">
-                          {formatEgp(m.action.amount)}
-                        </span>
-                      </div>
+                      {!NO_AMOUNT_TYPES.has(m.action.type) &&
+                        !(m.action.type === "transaction_update" && m.action.amount === 0) && (
+                          <div>
+                            <span className="text-slate-400 block text-[10px]">
+                              {actionAmountLabel(m.action.type)}:
+                            </span>
+                            <span className="font-black text-white text-base">
+                              {formatEgp(
+                                m.action.type === "savings_goal_create"
+                                  ? m.action.targetAmount || m.action.amount
+                                  : m.action.amount
+                              )}
+                            </span>
+                          </div>
+                        )}
                       <div>
                         <span className="text-slate-400 block text-[10px]">الوصف:</span>
                         <span className="font-bold text-slate-200">
                           {m.action.description}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-slate-400 block text-[10px]">الحساب:</span>
-                        <span className="font-semibold text-slate-300">
-                          {m.action.type === "transfer"
-                            ? `${m.action.accountName} ➔ ${m.action.toAccountName}`
-                            : m.action.accountName}
-                        </span>
-                      </div>
+                      {SHOW_ACCOUNT_TYPES.has(m.action.type) && (
+                        <div>
+                          <span className="text-slate-400 block text-[10px]">الحساب:</span>
+                          <span className="font-semibold text-slate-300">
+                            {m.action.type === "transfer"
+                              ? `${m.action.accountName} ➔ ${m.action.toAccountName}`
+                              : m.action.accountName}
+                          </span>
+                        </div>
+                      )}
                       <div>
                         <span className="text-slate-400 block text-[10px]">التصنيف:</span>
                         <span className="font-semibold text-slate-300">
@@ -479,7 +594,11 @@ export default function ChatBox() {
                         ) : (
                           <CheckCircle2 className="w-3.5 h-3.5" />
                         )}
-                        <span>تأكيد وتسجيل الآن</span>
+                        <span>
+                          {["transaction_delete", "debt_delete", "savings_goal_delete", "transaction_update"].includes(m.action.type)
+                            ? "تأكيد"
+                            : "تأكيد وتسجيل الآن"}
+                        </span>
                       </button>
 
                       <button
@@ -553,6 +672,27 @@ export default function ChatBox() {
         }}
         className="p-3.5 border-t border-slate-800 bg-slate-900/80 flex items-center gap-2"
       >
+        {/* Scan receipt photo button */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleScanFile(file);
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
+          title="صوّر فاتورة أو إيصال ويسجل تلقائياً"
+          className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all shrink-0 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 disabled:opacity-40"
+        >
+          <Camera className="w-5 h-5 text-amber-400" />
+        </button>
+
         {/* Voice Input Microphone Button */}
         <button
           type="button"
