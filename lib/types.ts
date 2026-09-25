@@ -160,6 +160,8 @@ export interface AssistantResponse {
   text: string;
   action?: ParsedAction;
   data?: Record<string, unknown>;
+  /** True when the local parser didn't recognize the intent (should try the LLM) */
+  unhandledByLocal?: boolean;
 }
 
 // Convert EGP to Piastres (safe integer)

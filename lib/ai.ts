@@ -1326,6 +1326,7 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
   const accountsShort = accounts.slice(0, 3).map((a) => `${a.name}: ${formatEgp(a.balance)}`).join(" | ");
   return {
     text: `فهمتك يا فندم، ومش فاتني أي حاجة من حسابك الحالي:\n📌 ${accountsShort}\n\nتقدر تسألني بأي طريقة على سبيل المثال:\n• «صرفت كام النهارده؟»\n• «معايا كام في البنك؟»\n• «المتاح بعد الالتزامات كام؟»\n• «لو صرفت 1500 هيحصلي إيه؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n\nولو قصدك حاجة معينة تاني، قوليها بكلماتك وأنا أرد عليك فوراً.`,
+    unhandledByLocal: true,
   };
 }
 
@@ -1337,11 +1338,20 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
   // Persist the user's message so we can keep a conversation memory
   await saveAiMessage(userId, "user", userPrompt);
 
-  let result: AssistantResponse;
+  // FAST PATH: RUN THE LOCAL PARSER FIRST — instant & deterministic for the
+  // ~20 known intents (expense/income/transfer, debts, goals, bills, budgets,
+  // delete/correct, notifications, briefs, pace, alerts). Only free-form
+  // questions fall through to the LLM.
+  const localResult = await handleLocalEgyptianQuery(userPrompt, userId);
+  if (!localResult.unhandledByLocal) {
+    if (localResult.text) await saveAiMessage(userId, "assistant", localResult.text);
+    return localResult;
+  }
+
+  let result: AssistantResponse = localResult;
 
   if (!openai || !config.apiKey) {
-    // Return fast, dependable local Egyptian parsing
-    result = await handleLocalEgyptianQuery(userPrompt, userId);
+    // No LLM configured → keep the friendly local reply
   } else {
     try {
       const accounts = await getAccounts(userId);
@@ -1402,7 +1412,7 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
    - transaction_delete: حذف آخر عملية أو عملية معينة — description (وصفها أو كلمة «آخر») + transactionId لو عارف رقمها
    - transaction_update: تصحيح عملية — description (الوصف الجديد) + category (التصنيف الجديد) + amountEgp (المبلغ الجديد اختياري) + transactionId لو معروف
 2. لو أرسل لك نص إشعار بنكي / انستاباي / فودافون كاش (زي «عزيزي العميل» أو «تم خصم مبلغ»): حلل المبلغ والجهة والحساب وارجع ACTION_JSON expense/income/transfer ببيانات الإشعار مباشرة بدل ما تعتبره كلام عادي.
-3. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.
+3. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً وبتقصير وبالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة (سطرين لثلاثة سطور كحد أقصى)، من غير مقدمات ولا تفكير مطوّل.
 4. افتكر سياق المحادثة السابقة (الأسئلة السابقة وردودك) وفيه ردودك والإجراءات اللي حصلت، وخلي ردودك متسقة مع المحادثة. لو سألك شيء زي "وأيه تاني / إزاي؟" اعرف إنه بيكمل على آخر سؤال.
 5. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.
 6. لو سأل «المتاح كام؟» أو «اقدر أصرف كام؟»: اعتمد رقم «المتاح بعد الالتزامات» واذكر الالتزامات المسجلة (أسماء المبالغ) اللي داخلة في الخصم.
@@ -1417,7 +1427,7 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
           ...mapHistoryToMessages(history),
           { role: "user", content: userPrompt },
         ],
-        max_tokens: 2000,
+        max_tokens: 800,
       };
       // O-series reasoning models (o1/o3/o4) don't accept temperature
       if (!/\/?o[134](-|$)/i.test(config.model)) {
@@ -1434,13 +1444,11 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
       const msg = error instanceof Error ? error.message : "";
       // Detect low-credit / quota errors so the user knows why the AI isn't reasoning
       if (/402|credits|quota|insufficient|payment/i.test(msg)) {
-        const fallback = await handleLocalEgyptianQuery(userPrompt, userId);
         result = {
-          text: `${fallback.text}\n\n⚠️ ملحوظة صغيرة: الموديل اللي راكب — ${config.model} — محتاج إضافة كريدت في حسابك على OpenRouter عشان يرد عليك بذكاء حقيقي. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
-          action: fallback.action,
+          text: `${localResult.text}\n\n⚠️ ملحوظة صغيرة: الموديل اللي راكب — ${config.model} — محتاج إضافة كريدت في حسابك على OpenRouter عشان يرد عليك بذكاء حقيقي. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
         };
       } else {
-        result = await handleLocalEgyptianQuery(userPrompt, userId);
+        result = localResult;
       }
     }
   }

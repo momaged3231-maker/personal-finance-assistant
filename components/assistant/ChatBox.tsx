@@ -53,6 +53,22 @@ export default function ChatBox() {
   const [isListening, setIsListening] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+
+  const loadingPhrases = ["بجهز ردك...", "بقرأ حساباتك...", "بفكر في إجابة..."];
+  const [loadingPhrase, setLoadingPhrase] = useState(loadingPhrases[0]);
+  const [loadingTick, setLoadingTick] = useState(0);
+  useEffect(() => {
+    if (!loading) {
+      setLoadingPhrase(loadingPhrases[0]);
+      setLoadingTick(0);
+      return;
+    }
+    const t = setInterval(() => setLoadingTick((c) => c + 1), 650);
+    return () => clearInterval(t);
+  }, [loading]);
+  useEffect(() => {
+    setLoadingPhrase(loadingPhrases[loadingTick % loadingPhrases.length]);
+  }, [loadingTick]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -628,7 +644,7 @@ export default function ChatBox() {
         {loading && (
           <div className="flex items-center gap-2 text-slate-400 text-xs p-2">
             <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-            <span>المساعد يفكر ويقرأ حساباتك...</span>
+            <span>{loadingPhrase}</span>
           </div>
         )}
 
