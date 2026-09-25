@@ -268,6 +268,34 @@ function extractPersonName(raw: string): string | undefined {
   return undefined;
 }
 
+const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+
+// Extract (person → amount) pairs from a multi-debt command like
+// «سجل لي 3 ديون: لمحمد 500 ولأحمد 300» or single «عندي دين 500 لمحمد»
+function extractDebtPairs(raw: string): Array<{ person: string; amount: number }> {
+  const s = (raw || "").replace(/[٠-٩]/g, (d) => String(AR_DIGITS.indexOf(d)));
+  const segs = s
+    .split(/[،,؛;]|:\s*|(?:\s*و(?:ل|لم)\s*)/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const pairs: Array<{ person: string; amount: number }> = [];
+  for (const seg of segs) {
+    const m =
+      seg.match(/(?:ل|لم|عند|من|سجل)\s*([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)/i) ||
+      seg.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|ججم|ج)?\s*(?:ل|لم)\s*([\u0600-\u06FF]{3,})/i) ||
+      seg.match(/^([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)$/i);
+    if (!m) continue;
+    const a = m[1];
+    const b = m[2];
+    const person = /^[\u0600-\u06FF]/.test(a) ? a : b;
+    const amount = parseFloat(/^[\u0600-\u06FF]/.test(a) ? b : a);
+    if (person && !/^(دين|ديون|سجل|اضيف|ضيف|لي|عندي|معايا|قرض|كل|ال)/i.test(person) && isFinite(amount) && amount > 0) {
+      pairs.push({ person, amount });
+    }
+  }
+  return pairs;
+}
+
 // ------------------------------------------------------------------
 // FEATURE: Budget alerts (category limits crossed / near limit)
 // ------------------------------------------------------------------
@@ -633,7 +661,7 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
   const isExpenseCommand =
     (/^(سجل|صرفت|دفعت|اشتريت|ادفع|خصم)($|\s|[0-9])/i.test(query) ||
       (/(جنيه|ج\.م)/.test(query) && /(سجائر|اكل|شرب|غدا|عشا|فطار|بنزين|مواصلات|تاكسي|اوبر|قهوة|شاي|سوبرماركت|لبن)/i.test(query))) &&
-    !/دين|قرض|سداد|مستحقات|هدف|ادخار|توفير/i.test(query) &&
+    !/دين|ديون|قرض|سداد|مستحقات|هدف|ادخار|توفير/i.test(query) &&
     !(hasRecurrenceHint && /فاتورة|اشتراك/i.test(query));
 
   const isIncomeCommand =
@@ -642,7 +670,7 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
 
   const isTransferCommand =
     /^(حولت|حول|نقلت|انقل|ابعت|تحويل)($|\s|[0-9])/i.test(query) &&
-    !/هدف|ادخار|توفير/i.test(query);
+    !/هدف|ادخار|توفير|دين|ديون/i.test(query);
 
   if (isExpenseCommand && !isIncomeCommand && !isTransferCommand) {
     const amountNum = parseArabicNumber(query);
@@ -843,16 +871,25 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
   }
 
   // 3(d). Debts: إنشاء / سداد / حذف
+  const isDebtPaymentPattern =
+    /(سددت|سدد|بسدد|دفعت|اديت|ودعت|سداد|دفعة|دفعات)/i.test(query) &&
+    /(دين|مستحقات|اللي\s*عليا|قرض)/i.test(query) &&
+    /[0-9٠-٩]/.test(query);
   const personName = extractPersonName(rawQuery);
   const debtCreatePattern =
-    /(ضيف\s*دين|اضيف\s*دين|سجل\s*دين|دين\s+جديد|استلفت|سلفت\s*من|اقترضت|اقرَضتُ|عليا\s+دين|بقيت\s+مديون|سلفني|اقرضني)/i;
+    /(ضيف\s*دين|اضيف\s*دين|سجل\s*(?:لي\s+)?(?:كل\s+)?(?:ال)?(?:دين|ديون)|دين\s+جديد|استلفت|سلفت\s*من|اقترضت|اقرَضتُ|عليا\s+دين|بقيت\s+مديون|سلفني|اقرضني|عندي\s*(?:دين|ديون)|لي\s*(?:دين|ديون)|سجلها|سجله|سجلهم|مديون|استدانت|مطلوب\s*مني)/i;
+  const debtPairs = extractDebtPairs(rawQuery);
 
-  if (debtCreatePattern.test(query)) {
+  if (debtCreatePattern.test(query) || ((/دين|ديون|قرض/i.test(query)) && !isDebtPaymentPattern && !/امسح|احذف|اشيل|الغي/i.test(query))) {
     const amountNum = parseArabicNumber(query);
     if (amountNum && amountNum > 0) {
       let debtKind: ParsedAction["debtKind"] = "i_owe";
       if (/جامعية|جمعية|جامعيه|جمعيه/i.test(query)) debtKind = "gam_eya";
       else if (/مديني|عنده\s+عندي|مستحق\s+لي|دين\s+لي|بستلفني|تسدلي|مداين/i.test(query)) debtKind = "owed_to_me";
+
+      const pair = debtPairs[0];
+      const effectiveName = pair ? pair.person : personName;
+      const effectiveAmount = pair ? pair.amount : amountNum;
 
       let dueDate: string | undefined;
       const dueMatch = query.match(/بعد\s+(\d{1,3})\s*يوم/i);
@@ -861,37 +898,38 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
         d.setDate(d.getDate() + Number(dueMatch[1]));
         dueDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       }
-      const desc = `دين${personName ? `: ${personName}` : ""}`;
+      const desc = `دين${effectiveName ? `: ${effectiveName}` : ""}`;
       const kindLabel = debtKind === "gam_eya" ? "جامعية (جمعية)" : debtKind === "owed_to_me" ? "دين مستحق لك" : "دين عليك";
+      const extraPairs = debtPairs.length > 1 ? `\nℹ️ في كمان ${debtPairs.length - 1} دين في رسالتك — هسجلهم واحد واحد، قولي «هيا» واكتب التالي.` : "";
       return {
         text: "وصلني، جاهز أسجل الدين:",
         action: {
           type: "debt_create",
-          amount: egpToPiastres(amountNum),
-          amountEgp: amountNum,
+          amount: egpToPiastres(effectiveAmount),
+          amountEgp: effectiveAmount,
           description: desc,
           category: "ديون وقروض",
           accountId: cashAcc.id,
           accountName: cashAcc.name,
-          personName,
+          personName: effectiveName,
           debtKind,
           dueDate,
           requiresConfirmation: true,
           confirmationMessage:
             `${kindLabel} 💳\n` +
-            `💵 ${amountNum} جنيه\n` +
+            `💵 ${effectiveAmount} جنيه\n` +
             `📝 ${desc}\n` +
             `${dueDate ? `📅 مستحق: ${dueDate}\n` : ""}` +
+            (extraPairs ? extraPairs.trim() + "\n" : "") +
             `تأكيد الحفظ؟`,
         },
       };
+    } else {
+      return {
+        text: `تمام، هسجّل الدين ده ليك 📝\nقولي بس التفاصيل بالشكل ده مثلاً:\n• «عندي دين 500 لمحمد»\n• «سجل دين 700 لأحمد استلفته منه»\nوأنا هثبته لك فوراً.`,
+      };
     }
   }
-
-  const isDebtPaymentPattern =
-    /(سددت|سدد|بسدد|دفعت|اديت|ودعت|سداد|دفعة|دفعات)/i.test(query) &&
-    /(دين|مستحقات|اللي\s*عليا|قرض)/i.test(query) &&
-    /[0-9٠-٩]/.test(query);
 
   if (isDebtPaymentPattern) {
     const amountNum = parseArabicNumber(query);
