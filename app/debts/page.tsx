@@ -14,6 +14,8 @@ import {
   Calendar,
   Sparkles,
   Wallet,
+  Pencil,
+  Bell,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { formatEgp, egpToPiastres, DebtItem } from "@/lib/types";
@@ -26,6 +28,15 @@ export default function DebtsPage() {
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<DebtItem | null>(null);
   const [payAmountInput, setPayAmountInput] = useState("");
+
+  // Edit debt modal state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editDebt, setEditDebt] = useState<DebtItem | null>(null);
+  const [editType, setEditType] = useState<"gam_eya" | "i_owe" | "owed_to_me">("gam_eya");
+  const [editTitle, setEditTitle] = useState("");
+  const [editPerson, setEditPerson] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
 
   // New debt form state
   const [formType, setFormType] = useState<"gam_eya" | "i_owe" | "owed_to_me">("gam_eya");
@@ -125,6 +136,44 @@ export default function DebtsPage() {
     }
   };
 
+  const openEditModal = (item: DebtItem) => {
+    setEditDebt(item);
+    setEditType(item.type);
+    setEditTitle(item.title);
+    setEditPerson(item.person_name || "");
+    setEditAmount((item.amount / 100).toFixed(2));
+    setEditDueDate(item.due_date || "");
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateDebt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editDebt || !editTitle || !editAmount) return;
+
+    try {
+      const res = await fetch("/api/finance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_debt",
+          id: editDebt.id,
+          type: editType,
+          title: editTitle,
+          personName: editPerson,
+          amount: parseFloat(editAmount),
+          dueDate: editDueDate || undefined,
+        }),
+      });
+      if (res.ok) {
+        setIsEditModalOpen(false);
+        setEditDebt(null);
+        fetchDebts();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Calculations
   const totalGamEya = debts
     .filter((d) => d.type === "gam_eya" && d.status === "pending")
@@ -142,6 +191,32 @@ export default function DebtsPage() {
     if (filterType === "all") return true;
     return d.type === filterType;
   });
+
+  // Payment notifications (overdue + due within 14 days)
+  const daysDiff = (due: string) => {
+    const dueDate = new Date(due.length <= 10 ? due + "T00:00:00" : due);
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return Math.round((dueDate.getTime() - now.getTime()) / 86400000);
+  };
+
+  const notificationItems = debts
+    .filter((d) => d.due_date && d.status !== "paid" && d.paid_amount < d.amount)
+    .map((d) => ({ d, days: daysDiff(String(d.due_date)) }))
+    .filter((x) => x.days <= 14)
+    .sort((a, b) => a.days - b.days);
+
+  const notificationTypeLabel = (type: string) => {
+    if (type === "gam_eya") return "جمعية";
+    if (type === "owed_to_me") return "مستحق ليك";
+    return "دين عليك";
+  };
+
+  const notificationTypeColor = (type: string) => {
+    if (type === "gam_eya") return "bg-indigo-500/20 text-indigo-400";
+    if (type === "owed_to_me") return "bg-emerald-500/20 text-emerald-400";
+    return "bg-rose-500/20 text-rose-400";
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-24 md:pb-12" dir="rtl">
@@ -170,6 +245,43 @@ export default function DebtsPage() {
             إضافة جمعية أو دين جديد
           </button>
         </div>
+
+        {/* Payment Notifications */}
+        {notificationItems.length > 0 && (
+          <div className="rounded-3xl border border-amber-500/25 bg-amber-950/15 p-4 mb-8">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm mb-3">
+              <Bell className="w-4 h-4" />
+              تنبيهات السداد والقبض
+            </div>
+            <div className="space-y-2">
+              {notificationItems.map(({ d, days }) => (
+                <div
+                  key={d.id}
+                  className="flex items-center justify-between gap-3 rounded-2xl bg-slate-900/70 border border-slate-800 px-4 py-2.5"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${notificationTypeColor(d.type)}`}>
+                      {notificationTypeLabel(d.type)}
+                    </span>
+                    <span className="text-xs font-semibold text-slate-200 truncate">{d.title}</span>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs text-slate-400 whitespace-nowrap">
+                      المتبقي <span className="text-amber-400 font-black">{formatEgp(d.amount - d.paid_amount)}</span>
+                    </span>
+                    <span
+                      className={`text-[11px] font-bold whitespace-nowrap ${
+                        days < 0 ? "text-rose-400" : days === 0 ? "text-amber-400" : "text-emerald-400"
+                      }`}
+                    >
+                      {days < 0 ? `متأخر ${Math.abs(days)} يوم` : days === 0 ? "مستحق النهاردة" : `باقي ${days} يوم`}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Top Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
@@ -295,12 +407,21 @@ export default function DebtsPage() {
                       )}
                     </div>
 
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="text-slate-500 hover:text-rose-400 transition p-1"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => openEditModal(item)}
+                        className="text-slate-500 hover:text-indigo-400 transition p-1"
+                        title="تعديل"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="text-slate-500 hover:text-rose-400 transition p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Amounts */}
@@ -328,6 +449,16 @@ export default function DebtsPage() {
                       style={{ width: `${progress}%` }}
                     />
                   </div>
+
+                  {!isPaid && (
+                    <div className="flex items-center justify-between text-xs mb-3 rounded-2xl bg-slate-900/70 border border-slate-800 px-3 py-2">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                        المتبقي:
+                      </span>
+                      <span className="font-black text-amber-400">{formatEgp(item.amount - item.paid_amount)}</span>
+                    </div>
+                  )}
 
                   {/* Footer details & Action */}
                   <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
@@ -441,6 +572,107 @@ export default function DebtsPage() {
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Edit Debt / Gam'eya */}
+        {isEditModalOpen && editDebt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+              <h3 className="text-base font-bold text-white">تعديل السجل</h3>
+              <form onSubmit={handleUpdateDebt} className="space-y-3.5">
+                <div className="text-xs text-slate-400">
+                  المعاملة: <span className="text-white font-bold">{editDebt.title}</span>
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">النوع:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "gam_eya", label: "جمعية شهرية" },
+                      { id: "i_owe", label: "دين عليّ" },
+                      { id: "owed_to_me", label: "فلوس ليا برة" },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setEditType(t.id as typeof editType)}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
+                          editType === t.id
+                            ? "bg-indigo-600 border-indigo-500 text-white"
+                            : "bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">اسم الجمعية / المعاملة:</label>
+                  <input
+                    type="text"
+                    required
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">الطرف الآخر (اختياري):</label>
+                  <input
+                    type="text"
+                    value={editPerson}
+                    onChange={(e) => setEditPerson(e.target.value)}
+                    placeholder="اسم أمين الجمعية أو الشخص"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">إجمالي المبلغ (ج.م):</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">تاريخ الاستحقاق:</label>
+                  <input
+                    type="date"
+                    value={editDueDate}
+                    onChange={(e) => setEditDueDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-3">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition"
+                  >
+                    حفظ التعديل
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditModalOpen(false);
+                      setEditDebt(null);
+                    }}
                     className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition"
                   >
                     إلغاء

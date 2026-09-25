@@ -28,6 +28,7 @@ import {
   getDebts,
   createDebt,
   updateDebtPayment,
+  updateDebt,
   deleteDebt,
   getSavingsGoals,
   createSavingsGoal,
@@ -287,6 +288,23 @@ export async function POST(req: NextRequest) {
       const { id, paidAmount, status } = body;
       const piastres = toPiastres(paidAmount);
       await updateDebtPayment(Number(id), piastres, status, userId);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "update_debt") {
+      const { id, type, title, personName, amount, dueDate } = body;
+      const piastres = amount !== undefined && amount !== null ? toPiastres(amount) : undefined;
+      await updateDebt(
+        Number(id),
+        {
+          type,
+          title,
+          personName: personName === undefined ? undefined : (personName || null),
+          amount: piastres,
+          dueDate: dueDate === undefined ? undefined : (dueDate || null),
+        },
+        userId
+      );
       return NextResponse.json({ success: true });
     }
 

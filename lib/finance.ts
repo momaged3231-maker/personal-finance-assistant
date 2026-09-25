@@ -765,6 +765,31 @@ export async function updateDebtPayment(id: number, paidAmount: number, status?:
   if (error) throw error;
 }
 
+export async function updateDebt(
+  id: number,
+  data: {
+    type?: "gam_eya" | "i_owe" | "owed_to_me";
+    title?: string;
+    personName?: string | null;
+    amount?: number;
+    dueDate?: string | null;
+  },
+  userId?: number
+) {
+  const client = requireSupabase();
+  const updateObj: Record<string, unknown> = {};
+  if (data.type) updateObj.type = data.type;
+  if (data.title) updateObj.title = data.title;
+  if ("personName" in data) updateObj.person_name = data.personName ?? null;
+  if (data.amount !== undefined) updateObj.amount = data.amount;
+  if ("dueDate" in data) updateObj.due_date = data.dueDate ?? null;
+  if (Object.keys(updateObj).length === 0) return;
+  let query = client.from("debts").update(updateObj).eq("id", id);
+  if (userId) query = query.eq("user_id", userId);
+  const { error } = await query;
+  if (error) throw error;
+}
+
 export async function deleteDebt(id: number, userId?: number) {
   const client = requireSupabase();
   const query = client.from("debts").delete().eq("id", id);
