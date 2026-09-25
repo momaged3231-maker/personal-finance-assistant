@@ -16,6 +16,11 @@ import {
   formatEgp,
   egpToPiastres,
   piastresToEgp,
+  gamEyaFreqLabel,
+  gamEyaFreqAdvLabel,
+  gamEyaInstallmentFreqLabel,
+  gamEyaPeriodUnit,
+  gamEyaPeriodUnitPlural,
 } from "./finance";
 import { getActiveRecurringBills, getUpcomingBills } from "./bills";
 import {
@@ -306,10 +311,19 @@ function extractDebtPairs(raw: string): Array<{ person: string; amount: number }
 // Gam'eya (جمعية) structure parsing — cyclic savings club
 // "جمعية قسطها 1000 شهريا لمدة 10 شهور وقبضي في الشهر الخامس"
 // ------------------------------------------------------------------
-function gamEyaReceiptDateFromNow(receiptMonth: number, installmentDay = 1): string {
+function gamEyaReceiptDateFromNow(
+  receiptPeriod: number,
+  installmentDay = 1,
+  frequency: "daily" | "weekly" | "monthly" = "monthly"
+): string {
   const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth() + (receiptMonth - 1), 1);
-  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(Math.max(1, Math.min(installmentDay, 28))).padStart(2, "0")}`;
+  if (frequency === "monthly") {
+    const target = new Date(now.getFullYear(), now.getMonth() + (receiptPeriod - 1), 1);
+    return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(Math.max(1, Math.min(installmentDay, 28))).padStart(2, "0")}`;
+  }
+  const target = new Date(now);
+  target.setDate(now.getDate() + (frequency === "weekly" ? (receiptPeriod - 1) * 7 : receiptPeriod - 1));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(Math.max(1, target.getDate())).padStart(2, "0")}`;
 }
 
 const AR_ORDINALS: Array<[RegExp, number]> = [
@@ -325,7 +339,7 @@ const AR_ORDINALS: Array<[RegExp, number]> = [
   [/العاشر|\bعشره\b|\bعشرة\b/, 10],
 ];
 
-/** Tries to extract a strict gam'eya structure (installment + cycle months, optionally receipt month/day/date). Returns null if not strict. */
+/** Tries to extract a strict gam'eya structure (installment + cycle periods, optionally receipt period/day/date). Returns null if not strict. */
 function parseGamEyaStructure(
   raw: string
 ): null | {
@@ -334,13 +348,14 @@ function parseGamEyaStructure(
   receiptMonth?: number;
   installmentDay?: number;
   receiptDate?: string;
+  frequency?: "daily" | "weekly" | "monthly";
 } {
   const q = raw.replace(/[٠-٩]/g, (d) => String(AR_DIGITS.indexOf(d)));
 
   let installment: number | undefined;
   const installMatch =
     q.match(/قسط(ها|ي| الشهري| الشهريه|ه)?\s*(?:بـ?|هو|يساوي| بتاعتها)?\s*(\d+(?:\.\d+)?)/i) ||
-    q.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|جنية|ج\.م)?\s*(?:شهريا|شهري\b|شهريه|كل\s*شهر|في\s*ال?شهر\b)/i) ||
+    q.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|جنية|ج\.م)?\s*(?:شهريا|شهري\b|شهريه|كل\s*شهر|في\s*ال?شهر\b|اسبوع(?:ي|ى|ية)?\b|كل\s*اسبوع|يومي|يومى|كل\s*يوم)/i) ||
     q.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|جنية|ج\.م)\s*.*?(?:ال?قسط|على\s*ال?شهر)/i);
   if (installMatch) installment = Number(installMatch[installMatch.length - 1]);
   if (!installment) {
@@ -351,10 +366,17 @@ function parseGamEyaStructure(
 
   let months: number | undefined;
   const monthsMatch =
-    q.match(/(?:على|لمدة|لـ?|مدتها|عدد)\s*(\d{1,2})\s*(?:شهور|اشهر|شهر\b)/i) ||
-    q.match(/(\d{1,2})\s*(?:شهور|اشهر\b)/i);
+    q.match(/(?:على|لمدة|لـ?|مدتها|عدد)\s*(\d{1,3})\s*(?:شهور|اشهر|شهر\b|أسابيع|اسابيع|اسبوع(?:ات)?\b|أيام|ايام|يوم\b|دورات|مرات)/i) ||
+    q.match(/(\d{1,3})\s*(?:شهور|اشهر\b|أسابيع|اسابيع|اسبوع(?:ات)?\b|أيام|ايام\b|دورات)/i);
   if (monthsMatch) months = Number(monthsMatch[1]);
   if (!months || !isFinite(months) || months <= 0) return null;
+
+  let frequency: "daily" | "weekly" | "monthly" = "monthly";
+  if (/اسبوع|اسبوعي|اسبوعى|اسبوعية|اسبوعياً|كل\s*اسبوع|على\s*ال?اسبوع|بالاسبوع|اسبوعين/i.test(q)) {
+    frequency = "weekly";
+  } else if (/يومي|يومى|يومية|يومياً|يوميا|كل\s*يوم|على\s*ال?يوم|بالنهار|بالروتين\s*اليومي/i.test(q)) {
+    frequency = "daily";
+  }
 
   let receiptMonth: number | undefined;
   const receiptAnchor = q.match(/(قبضي|اقبض|هقبض|بستلم|باخد\s*ال?قبض|القبض|ميعاد\s*ال?قبض|شهر\s*ال?قبض)/i);
@@ -386,7 +408,7 @@ function parseGamEyaStructure(
     receiptDate = `${yyyy}-${String(mm).padStart(2, "0")}-${String(Math.min(28, dd)).padStart(2, "0")}`;
   }
 
-  return { installment, months, receiptMonth, installmentDay, receiptDate };
+  return { installment, months, receiptMonth, installmentDay, receiptDate, frequency };
 }
 
 // ------------------------------------------------------------------
@@ -745,20 +767,27 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
       (rawQuery.match(/امين(?:ها|ه)?\s+([\u0600-\u06FF]{3,})/i) || [])[1];
     const effectiveName = gamPersonName;
     const pot = gamStructure.installment * gamStructure.months;
+    const gamFreq = gamStructure.frequency || "monthly";
     const dueDate =
       gamStructure.receiptDate ||
       (gamStructure.receiptMonth
-        ? gamEyaReceiptDateFromNow(gamStructure.receiptMonth, gamStructure.installmentDay || 1)
+        ? gamEyaReceiptDateFromNow(gamStructure.receiptMonth, gamStructure.installmentDay || 1, gamFreq)
         : undefined);
     const lines = [
-      `جمعية (نظام القبض الشهري) 💳`,
-      `قسط شهري: ${gamStructure.installment} جنيه × ${gamStructure.months} شهور`,
+      `جمعية (نظام القبض ${gamEyaFreqLabel(gamFreq)}) 💳`,
+      `قسط ${gamEyaFreqAdvLabel(gamFreq)}: ${gamStructure.installment} جنيه × ${gamStructure.months} ${gamEyaPeriodUnitPlural(gamFreq)}`,
       `إجمالي القبض: ${pot} جنيه`,
     ];
     if (gamStructure.receiptMonth) {
-      lines.push(`📅 شهر القبض: ${gamStructure.receiptMonth}${dueDate ? ` — بتاريخ ${dueDate}` : ""}`);
+      lines.push(`📅 دور القبض (${gamEyaPeriodUnit(gamFreq)}): ${gamStructure.receiptMonth}${dueDate ? ` — بتاريخ ${dueDate}` : ""}`);
     }
-    if (gamStructure.installmentDay) lines.push(`📆 ميعاد السداد كل شهر: يوم ${gamStructure.installmentDay}`);
+    if (gamStructure.installmentDay) {
+      lines.push(
+        `📆 ميعاد السداد ${
+          gamFreq === "weekly" ? "أسبوعياً" : gamFreq === "daily" ? "يومياً" : "كل شهر"
+        }${gamFreq === "daily" ? "" : `: يوم ${gamStructure.installmentDay}`}`
+      );
+    }
     lines.push(`📝 ${effectiveName ? `جمعية: ${effectiveName}` : "جمعية جديدة"}`);
     lines.push(`تأكيد الحفظ؟`);
     return {
@@ -777,6 +806,7 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
         receiptMonth: gamStructure.receiptMonth,
         dayOfMonth: gamStructure.installmentDay,
         dueDate,
+        frequency: gamFreq,
         requiresConfirmation: true,
         confirmationMessage: lines.join("\n"),
       },
@@ -1584,7 +1614,7 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
    الأنواع الممكنة:
    - expense / income / transfer: عملية عادية (amountEgp مطلوب)
    - debt_create: إضافة دين — amountEgp + description (عنوان الدين) + personName (اسم الشخص اختياري) + debtKind من ("i_owe" دين عليك | "owed_to_me" دين مستحق لك | "gam_eya" جامعية/جمعية) + dueDate اختياري بصيغة YYYY-MM-DD
-   - gam_eya_create: تسجيل جمعية بنظام القبض — monthlyInstallment (القسط الشهري بالجنيه) + totalMonths (عدد شهور الدورة) + receiptMonth (شهر القبض ترتيباً من 1) + dayOfMonth (يوم السداد كل شهر) + dueDate (تاريخ القبض YYYY-MM-DD اختياري) — amount = إجمالي القبض (القسط × الشهور)
+   - gam_eya_create: تسجيل جمعية بنظام القبض — monthlyInstallment (القسط بالجنيه) + totalMonths (عدد الدوارات) + receiptMonth (دور القبض ترتيباً من 1) + dayOfMonth (يوم السداد) + frequency من ("daily" يومي | "weekly" أسبوعي | "monthly" شهري) + dueDate (تاريخ القبض YYYY-MM-DD اختياري) — amount = إجمالي القبض (القسط × الدوارات)
    - debt_payment: سداد دفعة من دين — amountEgp + description (عنوان الدين أو اسم الشخص)
    - debt_delete: حذف دين — description (عنوان الدين)
    - savings_goal_create: هدف ادخار جديد — targetAmountEgp (الهدف الكلي بالجنيه) + description (اسم الهدف)

@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
         case "gam_eya_create": {
           const months = action.totalMonths || 1;
           const installment = action.monthlyInstallment || action.amount || 0;
+          const freq = action.frequency === "daily" || action.frequency === "weekly" ? action.frequency : "monthly";
           await createGamEya({
             title: action.description,
             personName: action.personName,
@@ -147,9 +148,16 @@ export async function POST(req: NextRequest) {
             installmentDay: action.dayOfMonth,
             dueDate: action.dueDate,
             installmentsPaid: action.installmentsPaid,
+            frequency: freq,
             userId,
           });
-          replyText = `تم تسجيل الجمعية ✅ قسط شهري ${formatEgp(installment)} × ${months} شهر = إجمالي قبض ${formatEgp(installment * months)}`;
+          const freqLine =
+            freq === "daily"
+              ? `قسط يومي ${formatEgp(installment)} × ${months} يوم`
+              : freq === "weekly"
+              ? `قسط أسبوعي ${formatEgp(installment)} × ${months} أسبوع`
+              : `قسط شهري ${formatEgp(installment)} × ${months} شهر`;
+          replyText = `تم تسجيل الجمعية ✅ ${freqLine} = إجمالي قبض ${formatEgp(installment * months)}`;
           break;
         }
         case "debt_payment": {
@@ -201,7 +209,7 @@ export async function POST(req: NextRequest) {
               amount: action.amountEgp,
               category: action.category,
               account_id: action.accountId,
-              frequency: action.frequency || "monthly",
+              frequency: action.frequency === "weekly" || action.frequency === "monthly" || action.frequency === "quarterly" || action.frequency === "yearly" ? action.frequency : "monthly",
               day_of_month: action.dayOfMonth || 1,
               next_due_date: action.dueDate || computeNextDueDate(action.dayOfMonth || 1),
             },

@@ -311,51 +311,52 @@ export default function Navbar() {
       {/* Mobile Floating Bottom Bar (Hidden on marketing page for guests) */}
       {!isGuestLanding && (
         <div className="md:hidden fixed bottom-3 left-3 right-3 z-50">
-          <nav className="card-fintech bg-slate-950/95 border border-slate-800/80 rounded-2xl p-1.5 flex items-center justify-around shadow-2xl shadow-black/80 backdrop-blur-xl">
+          <nav className="card-fintech bg-slate-950/95 border border-slate-800/80 rounded-2xl p-1 flex items-center gap-0.5 shadow-2xl shadow-black/80 backdrop-blur-xl">
           {links
             .filter((item) => item.href !== "/assistant")
             .slice(0, 5)
             .map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
+            const shortLabel = item.href === "/debts" ? "الديون" : item.label;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl transition-all duration-200 ${
+                className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1 px-0.5 rounded-xl transition-all duration-200 ${
                   isActive
                     ? "text-blue-400 font-bold"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
                 <div
-                  className={`p-1 rounded-lg transition-all ${
+                  className={`p-1 rounded-lg transition-all shrink-0 ${
                     isActive ? "bg-blue-600/20 text-blue-400" : ""
                   }`}
                 >
                   <Icon className="w-4 h-4" />
                 </div>
-                <span className="text-[10px]">{item.label}</span>
+                <span className="text-[10px] truncate w-full text-center leading-none">{shortLabel}</span>
               </Link>
             );
           })}
           <Link
             href="/assistant"
-            className="flex flex-col items-center gap-0.5 py-1 px-2 text-indigo-400 font-bold"
+            className="flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1 px-0.5 text-indigo-400 font-bold"
           >
-            <div className="p-1 rounded-lg bg-indigo-600/20 text-indigo-400">
+            <div className="p-1 rounded-lg bg-indigo-600/20 text-indigo-400 shrink-0">
               <Bot className="w-4 h-4" />
             </div>
-            <span className="text-[10px]">المساعد</span>
+            <span className="text-[10px] truncate w-full text-center leading-none">المساعد</span>
           </Link>
           <Link
             href={session?.authenticated ? "/settings" : "/login"}
-            className="flex flex-col items-center gap-0.5 py-1 px-2 text-slate-400"
+            className="flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1 px-0.5 text-slate-400"
           >
-            <div className="p-1 rounded-lg">
+            <div className="p-1 rounded-lg shrink-0">
               {session?.authenticated ? <Settings className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
             </div>
-            <span className="text-[10px]">{session?.authenticated ? "إعدادات" : "دخول"}</span>
+            <span className="text-[10px] truncate w-full text-center leading-none">{session?.authenticated ? "إعدادات" : "دخول"}</span>
           </Link>
         </nav>
       </div>

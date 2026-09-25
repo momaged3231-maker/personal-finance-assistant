@@ -33,6 +33,7 @@ import {
   updateGamEya,
   getAllGamEyaMeta,
   computeGamEyaInstallments,
+  normalizeGamEyaFrequency,
   deleteDebt,
   getSavingsGoals,
   createSavingsGoal,
@@ -331,7 +332,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "create_gam_eya") {
-      const { title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid } = body;
+      const { title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid, frequency } = body;
       const id = await createGamEya({
         title,
         personName,
@@ -341,13 +342,14 @@ export async function POST(req: NextRequest) {
         installmentDay: installmentDay ? Number(installmentDay) : undefined,
         dueDate,
         installmentsPaid: installmentsPaid ? Number(installmentsPaid) : undefined,
+        frequency: normalizeGamEyaFrequency(frequency),
         userId,
       });
       return NextResponse.json({ success: true, id });
     }
 
     if (action === "update_gam_eya") {
-      const { id, title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid } = body;
+      const { id, title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid, frequency } = body;
       await updateGamEya(
         Number(id),
         {
@@ -359,6 +361,7 @@ export async function POST(req: NextRequest) {
           installmentDay: installmentDay !== undefined && installmentDay !== null ? Number(installmentDay) : undefined,
           dueDate: dueDate === undefined ? undefined : (dueDate || null),
           installmentsPaid: installmentsPaid !== undefined && installmentsPaid !== null ? Number(installmentsPaid) : undefined,
+          frequency: frequency === undefined || frequency === null ? undefined : normalizeGamEyaFrequency(frequency),
         },
         userId
       );

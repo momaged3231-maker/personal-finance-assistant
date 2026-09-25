@@ -73,7 +73,7 @@ export interface ParsedAction {
   personName?: string; // debt counter-party
   dueDate?: string; // YYYY-MM-DD
   debtKind?: "gam_eya" | "i_owe" | "owed_to_me";
-  frequency?: "weekly" | "monthly" | "quarterly" | "yearly";
+  frequency?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
   dayOfMonth?: number;
   monthlyInstallment?: number; // piastres — gam'eya installment per month
   totalMonths?: number; // gam'eya cycle length in months
@@ -132,11 +132,12 @@ export interface DebtItem {
 
 /** Structured metadata for a gam'eya (جمعية) — stored in settings as JSON under `gam_eya_meta:<debtId>`. */
 export interface GamEyaMeta {
-  monthlyInstallment: number; // piastres per month
-  totalMonths: number; // cycle length
-  receiptMonth: number; // 1-based month index the user collects the pot (0 = not scheduled)
-  installmentDay: number; // day-of-month for payments (0 = not set)
+  monthlyInstallment: number; // piastres per period
+  totalMonths: number; // cycle length (number of collection periods)
+  receiptMonth: number; // 1-based period index the user collects the pot (0 = not scheduled)
+  installmentDay: number; // day-of-month (monthly) or weekday 1-7 (weekly) for payments (0 = not set)
   startDate?: string; // YYYY-MM-DD of the first installment
+  frequency?: "daily" | "weekly" | "monthly"; // collection cadence (defaults to "monthly")
 }
 
 export interface GamEyaInstallment {

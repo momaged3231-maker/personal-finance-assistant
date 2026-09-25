@@ -809,15 +809,48 @@ export async function deleteDebt(id: number, userId?: number) {
 
 // -------------------------------------------------------------
 // Gam'eya (جمعية) structured model — cyclic savings club
-// القسطة الشهرية + عدد الشهور + موعد القبض + جدول الأقساط
-// The debt row keeps: amount = pot (قسط×شهور), paid_amount =
+// القسط (يومي/أسبوعي/شهري) + عدد الدورات + موعد القبض + جدول الأقساط
+// The debt row keeps: amount = pot (قسط×دورات), paid_amount =
 // مجموع الأقساط المدفوعة, due_date = تاريخ القبض. The full
 // structure is persisted as JSON in settings under gam_eya_meta:<id>.
 // -------------------------------------------------------------
 const GAM_EYA_PREFIX = "gam_eya_meta:";
 
-function gamEyaMonthKey(year: number, month: number, day: number): string {
-  return `${year}-${String(month).padStart(2, "0")}-${String(Math.max(1, Math.min(day, 28))).padStart(2, "0")}`;
+export type GamEyaFrequency = "daily" | "weekly" | "monthly";
+
+export const GAM_EYA_FREQUENCIES: GamEyaFrequency[] = ["daily", "weekly", "monthly"];
+
+/** Normalizes any incoming frequency value to a valid cadence (defaults to monthly). */
+export function normalizeGamEyaFrequency(v: unknown): GamEyaFrequency {
+  return v === "daily" || v === "weekly" ? v : "monthly";
+}
+
+export function gamEyaFreqLabel(f: GamEyaFrequency): string {
+  return f === "daily" ? "يومية" : f === "weekly" ? "أسبوعية" : "شهرية";
+}
+
+export function gamEyaFreqAdvLabel(f: GamEyaFrequency): string {
+  return f === "daily" ? "يومي" : f === "weekly" ? "أسبوعي" : "شهري";
+}
+
+export function gamEyaInstallmentFreqLabel(f: GamEyaFrequency): string {
+  return f === "daily" ? "يومياً" : f === "weekly" ? "أسبوعياً" : "شهرياً";
+}
+
+export function gamEyaPeriodUnit(f: GamEyaFrequency): string {
+  return f === "daily" ? "يوم" : f === "weekly" ? "أسبوع" : "شهر";
+}
+
+export function gamEyaPeriodUnitPlural(f: GamEyaFrequency): string {
+  return f === "daily" ? "أيام" : f === "weekly" ? "أسابيع" : "شهور";
+}
+
+function gamEyaDateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function gamEyaDaysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
 }
 
 export async function setGamEyaMeta(userId: number, debtId: number, meta: GamEyaMeta): Promise<void> {
@@ -862,31 +895,53 @@ export async function getAllGamEyaMeta(userId: number): Promise<Record<number, G
   return map;
 }
 
-/** Builds the monthly installment schedule for a gam'eya. */
+/** Builds the installment schedule for a gam'eya (daily/weekly/monthly cadence). */
 export function computeGamEyaInstallments(
   debt: { paid_amount: number },
   meta: GamEyaMeta
 ): GamEyaInstallment[] {
   const { monthlyInstallment, totalMonths, installmentDay } = meta;
+  const freq = normalizeGamEyaFrequency(meta.frequency);
   if (!monthlyInstallment || !totalMonths) return [];
   const now = new Date();
-  const start = meta.startDate
-    ? meta.startDate
-    : (() => {
-        const day = installmentDay || 1;
-        const offset = day >= now.getDate() ? 0 : 1;
-        return gamEyaMonthKey(now.getFullYear(), now.getMonth() + 1 + offset, day);
-      })();
   const paidCount = Math.floor((debt.paid_amount || 0) / Math.max(monthlyInstallment, 1));
+
+  let start: Date;
+  if (meta.startDate) {
+    start = new Date(meta.startDate + "T00:00:00");
+  } else if (freq === "monthly") {
+    const day = Math.max(1, Math.min(installmentDay || 1, 31));
+    const offset = day >= now.getDate() ? 0 : 1;
+    const ym = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    start = new Date(ym.getFullYear(), ym.getMonth(), 1);
+    start.setDate(Math.min(day, gamEyaDaysInMonth(start.getFullYear(), start.getMonth())));
+  } else if (freq === "weekly") {
+    const weekday = installmentDay >= 1 && installmentDay <= 7 ? installmentDay : 1; // 1=Mon..7=Sun
+    const mondayOffset = (now.getDay() + 6) % 7;
+    start = new Date(now);
+    start.setDate(now.getDate() - mondayOffset + (weekday - 1));
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
   const out: GamEyaInstallment[] = [];
   for (let i = 0; i < totalMonths; i++) {
-    const dt = new Date(start + "T00:00:00");
-    dt.setMonth(dt.getMonth() + i);
-    const monthIndex = i + 1;
+    const periodIndex = i + 1;
+    const dt = new Date(start);
+    if (freq === "monthly") {
+      dt.setMonth(start.getMonth() + i);
+      const day = installmentDay || 1;
+      dt.setDate(Math.min(day, gamEyaDaysInMonth(dt.getFullYear(), dt.getMonth())));
+    } else if (freq === "weekly") {
+      dt.setDate(start.getDate() + i * 7);
+    } else {
+      dt.setDate(start.getDate() + i);
+    }
+    const receiptTag = periodIndex === meta.receiptMonth ? ` ⭐ ${gamEyaPeriodUnit(freq)} القبض` : "";
     out.push({
-      label: monthIndex === meta.receiptMonth ? `القسط ${monthIndex} ⭐ شهر القبض` : `القسط ${monthIndex}`,
-      monthIndex,
-      dueDate: gamEyaMonthKey(dt.getFullYear(), dt.getMonth() + 1, installmentDay || 1),
+      label: `القسط ${periodIndex}${receiptTag}`,
+      monthIndex: periodIndex,
+      dueDate: gamEyaDateKey(dt),
       amount: monthlyInstallment,
       paid: i < paidCount,
     });
@@ -904,6 +959,7 @@ export async function createGamEya(data: {
   installmentDay?: number;
   dueDate?: string; // receipt date YYYY-MM-DD
   installmentsPaid?: number;
+  frequency?: GamEyaFrequency;
   userId?: number;
 }): Promise<number> {
   const userId = data.userId || 1;
@@ -923,6 +979,7 @@ export async function createGamEya(data: {
     totalMonths: months,
     receiptMonth: data.receiptMonth || 0,
     installmentDay: data.installmentDay || 1,
+    frequency: normalizeGamEyaFrequency(data.frequency),
   });
   const paid = (Number(data.installmentsPaid) || 0) * installment;
   if (paid > 0) {
@@ -943,6 +1000,7 @@ export async function updateGamEya(
     installmentDay?: number;
     dueDate?: string | null;
     installmentsPaid?: number;
+    frequency?: GamEyaFrequency;
   },
   userId?: number
 ): Promise<void> {
@@ -958,6 +1016,7 @@ export async function updateGamEya(
     receiptMonth: data.receiptMonth ?? current?.receiptMonth ?? 0,
     installmentDay: data.installmentDay ?? current?.installmentDay ?? 1,
     startDate: current?.startDate,
+    frequency: normalizeGamEyaFrequency(data.frequency ?? current?.frequency ?? "monthly"),
   };
 
   const updateObj: Record<string, unknown> = {};

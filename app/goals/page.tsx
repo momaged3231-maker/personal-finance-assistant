@@ -140,8 +140,7 @@ export default function GoalsPage() {
   const overallProgress = totalTarget > 0 ? Math.round((totalCurrent / totalTarget) * 100) : 0;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-24 md:pb-12" dir="rtl">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+    <div className="max-w-6xl mx-auto">
 
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-6 mb-8">
@@ -430,7 +429,6 @@ export default function GoalsPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+  </div>
   );
 }

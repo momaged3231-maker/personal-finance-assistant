@@ -19,6 +19,15 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { formatEgp, egpToPiastres, DebtItem, GamEyaMeta, GamEyaInstallment } from "@/lib/types";
+import {
+  normalizeGamEyaFrequency,
+  gamEyaFreqLabel,
+  gamEyaFreqAdvLabel,
+  gamEyaInstallmentFreqLabel,
+  gamEyaPeriodUnit,
+  gamEyaPeriodUnitPlural,
+  GamEyaFrequency,
+} from "@/lib/finance";
 
 export default function DebtsPage() {
   const [debts, setDebts] = useState<DebtItem[]>([]);
@@ -45,6 +54,7 @@ export default function DebtsPage() {
   const [editReceiptMonth, setEditReceiptMonth] = useState("");
   const [editDayNum, setEditDayNum] = useState("");
   const [editPaidInstallments, setEditPaidInstallments] = useState("");
+  const [editFreq, setEditFreq] = useState<GamEyaFrequency>("monthly");
 
   // New debt form state
   const [formType, setFormType] = useState<"gam_eya" | "i_owe" | "owed_to_me">("gam_eya");
@@ -58,6 +68,7 @@ export default function DebtsPage() {
   const [formDayNum, setFormDayNum] = useState("");
   const [formReceiptDate, setFormReceiptDate] = useState("");
   const [formPaidInstallments, setFormPaidInstallments] = useState("");
+  const [formFreq, setFormFreq] = useState<GamEyaFrequency>("monthly");
 
   const fetchDebts = async () => {
     try {
@@ -115,6 +126,7 @@ export default function DebtsPage() {
             installmentDay: formDayNum ? parseFloat(formDayNum) : undefined,
             dueDate: formReceiptDate || undefined,
             installmentsPaid: formPaidInstallments ? parseFloat(formPaidInstallments) : undefined,
+            frequency: formFreq,
           }),
         });
         if (res.ok) {
@@ -127,6 +139,7 @@ export default function DebtsPage() {
           setFormDayNum("");
           setFormReceiptDate("");
           setFormPaidInstallments("");
+          setFormFreq("monthly");
           fetchDebts();
         }
         return;
@@ -218,12 +231,14 @@ export default function DebtsPage() {
       setEditMonths(String(meta.totalMonths));
       setEditReceiptMonth(meta.receiptMonth ? String(meta.receiptMonth) : "");
       setEditDayNum(meta.installmentDay ? String(meta.installmentDay) : "");
+      setEditFreq(normalizeGamEyaFrequency(meta.frequency));
       setEditPaidInstallments("");
     } else {
       setEditInstallment("");
       setEditMonths("");
       setEditReceiptMonth("");
       setEditDayNum("");
+      setEditFreq("monthly");
       setEditPaidInstallments("");
     }
     setIsEditModalOpen(true);
@@ -250,6 +265,7 @@ export default function DebtsPage() {
             installmentDay: editDayNum ? parseFloat(editDayNum) : undefined,
             dueDate: editDueDate || null,
             installmentsPaid: editPaidInstallments ? parseFloat(editPaidInstallments) : undefined,
+            frequency: editFreq,
           }),
         });
         if (res.ok) {
@@ -406,9 +422,38 @@ export default function DebtsPage() {
     return "bg-rose-500/20 text-rose-400";
   };
 
+  const metaFreq = (meta?: GamEyaMeta): GamEyaFrequency => normalizeGamEyaFrequency(meta?.frequency);
+
+  const freqSelector = (value: GamEyaFrequency, set: (f: GamEyaFrequency) => void) => (
+    <div>
+      <label className="text-xs text-slate-400 block mb-1">دورة القبض:</label>
+      <div className="grid grid-cols-3 gap-2">
+        {(
+          [
+            { id: "daily", label: "يومي" },
+            { id: "weekly", label: "أسبوعي" },
+            { id: "monthly", label: "شهري" },
+          ] as Array<{ id: GamEyaFrequency; label: string }>
+        ).map((f) => (
+          <button
+            type="button"
+            key={f.id}
+            onClick={() => set(f.id)}
+            className={`py-2 px-2 rounded-xl text-xs font-bold border transition ${
+              value === f.id
+                ? "bg-indigo-600 border-indigo-500 text-white"
+                : "bg-slate-950/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-24 md:pb-12" dir="rtl">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+    <div className="max-w-6xl mx-auto">
 
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-6 mb-8">
@@ -475,7 +520,7 @@ export default function DebtsPage() {
           {/* Gam'eya Card */}
           <div className="glass-panel p-5 rounded-3xl border border-indigo-500/30 bg-indigo-950/20 relative overflow-hidden">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-indigo-400">جمعيات شهرية نشطة</span>
+              <span className="text-xs font-semibold text-indigo-400">جمعيات نشطة</span>
               <Users className="w-5 h-5 text-indigo-400" />
             </div>
             <div className="text-2xl font-black text-white tracking-tight">
@@ -514,7 +559,7 @@ export default function DebtsPage() {
           <div className="flex items-center gap-2 overflow-x-auto">
             {[
               { id: "all", label: "الكل" },
-              { id: "gam_eya", label: "الجمعيات الشهرية" },
+              { id: "gam_eya", label: "الجمعيات" },
               { id: "i_owe", label: "ديون عليّ" },
               { id: "owed_to_me", label: "فلوس ليا برة" },
             ].map((tab) => (
@@ -606,7 +651,7 @@ export default function DebtsPage() {
                           }`}
                         >
                           {item.type === "gam_eya"
-                            ? "جمعية شهرية"
+                            ? `جمعية ${gamEyaFreqLabel(metaFreq(gamMeta[item.id]))}`
                             : item.type === "i_owe"
                             ? "دين عليّ"
                             : "فلوس ليا برة"}
@@ -627,17 +672,24 @@ export default function DebtsPage() {
                       {item.type === "gam_eya" && gamMeta[item.id] && (
                         <div className="mt-2 space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">
-                              قسط {formatEgp(gamMeta[item.id].monthlyInstallment)} شهرياً
-                            </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                              {gamMeta[item.id].totalMonths} شهور
-                            </span>
-                            {gamMeta[item.id].receiptMonth > 0 && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                                ⭐ هتقبض في الشهر {gamMeta[item.id].receiptMonth}
-                              </span>
-                            )}
+                            {(() => {
+                              const f = metaFreq(gamMeta[item.id]);
+                              return (
+                                <>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">
+                                    قسط {formatEgp(gamMeta[item.id].monthlyInstallment)} {gamEyaInstallmentFreqLabel(f)}
+                                  </span>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                                    {gamMeta[item.id].totalMonths} {gamEyaPeriodUnitPlural(f)}
+                                  </span>
+                                  {gamMeta[item.id].receiptMonth > 0 && (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                                      ⭐ هتقبض في {gamEyaPeriodUnit(f)} {gamMeta[item.id].receiptMonth}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                           {gamSchedules[item.id]?.length > 0 && (
                             <p className="text-[11px] text-slate-400">
@@ -751,7 +803,7 @@ export default function DebtsPage() {
                   <label className="text-xs text-slate-400 block mb-1">النوع:</label>
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { id: "gam_eya", label: "جمعية شهرية" },
+                      { id: "gam_eya", label: "جمعية" },
                       { id: "i_owe", label: "دين عليّ" },
                       { id: "owed_to_me", label: "فلوس ليا برة" },
                     ].map((t) => (
@@ -796,9 +848,10 @@ export default function DebtsPage() {
 
                 {formType === "gam_eya" ? (
                   <div className="space-y-3">
+                    {freqSelector(formFreq, setFormFreq)}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">القسط الشهري (ج.م):</label>
+                        <label className="text-xs text-slate-400 block mb-1">القسط {gamEyaFreqAdvLabel(formFreq)} (ج.م):</label>
                         <input
                           type="number"
                           step="any"
@@ -810,7 +863,7 @@ export default function DebtsPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">عدد الشهور:</label>
+                        <label className="text-xs text-slate-400 block mb-1">عدد {formFreq === "weekly" ? "الأسابيع" : formFreq === "daily" ? "الأيام" : "الشهور"}:</label>
                         <input
                           type="number"
                           required
@@ -822,18 +875,22 @@ export default function DebtsPage() {
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
+                      {formFreq !== "daily" && (
+                        <div>
+                          <label className="text-xs text-slate-400 block mb-1">
+                            {formFreq === "weekly" ? "يوم الالتزام أسبوعياً (1..7):" : "يوم السداد كل شهر:"}
+                          </label>
+                          <input
+                            type="number"
+                            value={formDayNum}
+                            onChange={(e) => setFormDayNum(e.target.value)}
+                            placeholder="مثال: 5"
+                            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                      )}
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">يوم السداد كل شهر:</label>
-                        <input
-                          type="number"
-                          value={formDayNum}
-                          onChange={(e) => setFormDayNum(e.target.value)}
-                          placeholder="مثال: 5"
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 block mb-1">شهر القبض (اختياري):</label>
+                        <label className="text-xs text-slate-400 block mb-1">دور القبض ({gamEyaPeriodUnit(formFreq)}) (اختياري):</label>
                         <input
                           type="number"
                           value={formReceiptMonth}
@@ -866,7 +923,7 @@ export default function DebtsPage() {
                     </div>
                     {parseFloat(formInstallment) > 0 && parseFloat(formMonths) > 0 && (
                       <div className="rounded-xl bg-indigo-950/40 border border-indigo-500/25 px-3 py-2 text-xs text-slate-300 flex items-center justify-between">
-                        <span>إجمالي القبض (القسط × الشهور):</span>
+                        <span>إجمالي القبض (القسط × {gamEyaPeriodUnitPlural(formFreq)}):</span>
                         <span className="font-black text-indigo-300">
                           {formatEgp(egpToPiastres(parseFloat(formInstallment) * parseFloat(formMonths)))}
                         </span>
@@ -933,7 +990,7 @@ export default function DebtsPage() {
                   <label className="text-xs text-slate-400 block mb-1">النوع:</label>
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { id: "gam_eya", label: "جمعية شهرية" },
+                      { id: "gam_eya", label: "جمعية" },
                       { id: "i_owe", label: "دين عليّ" },
                       { id: "owed_to_me", label: "فلوس ليا برة" },
                     ].map((t) => (
@@ -977,9 +1034,10 @@ export default function DebtsPage() {
 
                 {editType === "gam_eya" && gamMeta[editDebt.id] ? (
                   <div className="space-y-3">
+                    {freqSelector(editFreq, setEditFreq)}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">القسط الشهري (ج.م):</label>
+                        <label className="text-xs text-slate-400 block mb-1">القسط {gamEyaFreqAdvLabel(editFreq)} (ج.م):</label>
                         <input
                           type="number"
                           step="any"
@@ -990,7 +1048,7 @@ export default function DebtsPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">عدد الشهور:</label>
+                        <label className="text-xs text-slate-400 block mb-1">عدد {editFreq === "weekly" ? "الأسابيع" : editFreq === "daily" ? "الأيام" : "الشهور"}:</label>
                         <input
                           type="number"
                           required
@@ -1001,17 +1059,21 @@ export default function DebtsPage() {
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
+                      {editFreq !== "daily" && (
+                        <div>
+                          <label className="text-xs text-slate-400 block mb-1">
+                            {editFreq === "weekly" ? "يوم الالتزام أسبوعياً (1..7):" : "يوم السداد كل شهر:"}
+                          </label>
+                          <input
+                            type="number"
+                            value={editDayNum}
+                            onChange={(e) => setEditDayNum(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                      )}
                       <div>
-                        <label className="text-xs text-slate-400 block mb-1">يوم السداد كل شهر:</label>
-                        <input
-                          type="number"
-                          value={editDayNum}
-                          onChange={(e) => setEditDayNum(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 block mb-1">شهر القبض (اختياري):</label>
+                        <label className="text-xs text-slate-400 block mb-1">دور القبض ({gamEyaPeriodUnit(editFreq)}) (اختياري):</label>
                         <input
                           type="number"
                           value={editReceiptMonth}
@@ -1043,7 +1105,7 @@ export default function DebtsPage() {
                     </div>
                     {parseFloat(editInstallment) > 0 && parseFloat(editMonths) > 0 && (
                       <div className="rounded-xl bg-indigo-950/40 border border-indigo-500/25 px-3 py-2 text-xs text-slate-300 flex items-center justify-between">
-                        <span>إجمالي القبض (القسط × الشهور):</span>
+                        <span>إجمالي القبض (القسط × {gamEyaPeriodUnitPlural(editFreq)}):</span>
                         <span className="font-black text-indigo-300">
                           {formatEgp(egpToPiastres(parseFloat(editInstallment) * parseFloat(editMonths)))}
                         </span>
@@ -1142,7 +1204,6 @@ export default function DebtsPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+  </div>
   );
 }
