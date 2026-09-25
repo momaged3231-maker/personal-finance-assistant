@@ -11,6 +11,7 @@ import {
   CheckCircle,
   Bell,
   Zap,
+  Receipt,
 } from "lucide-react";
 import { formatEgp, piastresToEgp } from "@/lib/types";
 
@@ -55,6 +56,8 @@ const FREQUENCY_OPTIONS: { value: RecurringBill['frequency']; label: string }[] 
   { value: "quarterly", label: "كل 3 شهور" },
   { value: "yearly", label: "سنوي" },
 ];
+
+const INPUT_CLASS = "w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500";
 
 export function BillsManager() {
   const [bills, setBills] = useState<RecurringBill[]>([]);
@@ -242,10 +245,13 @@ export function BillsManager() {
   };
 
   const getStatusBadge = (bill: RecurringBill) => {
-    if (!bill.is_active) return <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded">متوقفة</span>;
-    if (bill.is_overdue) return <span className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded flex items-center gap-1"><AlertCircle className="w-3 h-3" /> متأخرة</span>;
-    if (bill.is_due_soon) return <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded flex items-center gap-1"><Bell className="w-3 h-3" /> خلال {bill.reminder_days} أيام</span>;
-    return <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded flex items-center gap-1"><CheckCircle className="w-3 h-3" /> بعد {bill.days_until_due} يوم</span>;
+    if (!bill.is_active)
+      return <span className="px-2.5 py-1 text-[11px] font-bold bg-slate-800 text-slate-400 border border-slate-700 rounded-full">متوقفة</span>;
+    if (bill.is_overdue)
+      return <span className="px-2.5 py-1 text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3" /> متأخرة</span>;
+    if (bill.is_due_soon)
+      return <span className="px-2.5 py-1 text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full flex items-center gap-1"><Bell className="w-3 h-3" /> خلال {bill.reminder_days} أيام</span>;
+    return <span className="px-2.5 py-1 text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full flex items-center gap-1"><CheckCircle className="w-3 h-3" /> بعد {bill.days_until_due} يوم</span>;
   };
 
   const getFrequencyLabel = (freq: RecurringBill['frequency']) => FREQUENCY_LABELS[freq];
@@ -253,10 +259,10 @@ export function BillsManager() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="h-8 bg-gray-100 rounded animate-pulse w-1/4" />
+        <div className="h-8 bg-slate-800/60 rounded-xl animate-pulse w-1/4" />
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="h-40 bg-gray-100 rounded animate-pulse" />
+            <div key={i} className="h-40 bg-slate-800/60 rounded-3xl animate-pulse" />
           ))}
         </div>
       </div>
@@ -266,14 +272,19 @@ export function BillsManager() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-6 mb-8">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">الفواتير المتكررة</h2>
-          <p className="text-gray-500 mt-1">تتبّع فواتيرك الدورية وتذكيرات الاستحقاق</p>
+          <h1 className="text-2xl font-black text-white flex items-center gap-2.5">
+            <span className="p-2 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              <Receipt className="w-6 h-6" />
+            </span>
+            الفواتير المتكررة
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">تتبّع فواتيرك الدورية وتذكيرات الاستحقاق</p>
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); }}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
+          className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 flex items-center gap-2 self-start md:self-auto transition"
         >
           <Plus className="w-4 h-4" /> فاتورة جديدة
         </button>
@@ -281,59 +292,59 @@ export function BillsManager() {
 
       {/* Messages */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError("")} className="text-red-500 hover:text-red-700">×</button>
+        <div className="bg-rose-950/40 border border-rose-500/30 text-rose-200 px-4 py-3 rounded-2xl flex items-center justify-between">
+          <span className="text-sm">{error}</span>
+          <button onClick={() => setError("")} className="text-rose-400 hover:text-rose-300">×</button>
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center justify-between">
-          <span>{success}</span>
-          <button onClick={() => setSuccess("")} className="text-green-500 hover:text-green-700">×</button>
+        <div className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 px-4 py-3 rounded-2xl flex items-center justify-between">
+          <span className="text-sm">{success}</span>
+          <button onClick={() => setSuccess("")} className="text-emerald-400 hover:text-emerald-300">×</button>
         </div>
       )}
 
       {/* Add/Edit Form */}
       {showForm && (
-        <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+        <div className="card-fintech p-6 rounded-3xl space-y-4 border-slate-800">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold">{editingBill ? "تعديل الفاتورة" : "فاتورة جديدة"}</h3>
-            <button onClick={resetForm} className="text-gray-400 hover:text-gray-600">×</button>
+            <h3 className="text-base font-bold text-white">{editingBill ? "تعديل الفاتورة" : "فاتورة جديدة"}</h3>
+            <button onClick={resetForm} className="text-slate-500 hover:text-slate-300">×</button>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">اسم الفاتورة *</label>
+                <label className="block text-xs text-slate-400 mb-1">اسم الفاتورة *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
                   placeholder="مثال: فاتورة الكهرباء، اشتراك النت، قسط المدرسة"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">المبلغ (جنيه) *</label>
+                <label className="block text-xs text-slate-400 mb-1">المبلغ (جنيه) *</label>
                 <input
                   type="number"
                   step="0.01"
                   min="0.01"
                   value={formData.amount}
                   onChange={e => setFormData({ ...formData, amount: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">التكرار *</label>
+                <label className="block text-xs text-slate-400 mb-1">التكرار *</label>
                 <select
                   value={formData.frequency}
                   onChange={e => setFormData({ ...formData, frequency: e.target.value as RecurringBill['frequency'] })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                 >
                   {FREQUENCY_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -342,57 +353,57 @@ export function BillsManager() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">يوم الاستحقاق *</label>
+                <label className="block text-xs text-slate-400 mb-1">يوم الاستحقاق *</label>
                 <input
                   type="number"
                   min="1"
                   max="31"
                   value={formData.day_of_month}
                   onChange={e => setFormData({ ...formData, day_of_month: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                 />
-                <p className="text-xs text-gray-500 mt-1">31 = آخر يوم في الشهر</p>
+                <p className="text-xs text-slate-500 mt-1">31 = آخر يوم في الشهر</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">أول استحقاق *</label>
+                <label className="block text-xs text-slate-400 mb-1">أول استحقاق *</label>
                 <input
                   type="date"
                   value={formData.next_due_date}
                   onChange={e => setFormData({ ...formData, next_due_date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">ينتهي في (اختياري)</label>
+                <label className="block text-xs text-slate-400 mb-1">ينتهي في (اختياري)</label>
                 <input
                   type="date"
                   value={formData.end_date}
                   onChange={e => setFormData({ ...formData, end_date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">التنبيه قبل (أيام)</label>
+                <label className="block text-xs text-slate-400 mb-1">التنبيه قبل (أيام)</label>
                 <input
                   type="number"
                   min="0"
                   max="30"
                   value={formData.reminder_days}
                   onChange={e => setFormData({ ...formData, reminder_days: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                 />
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">الحساب المدفوع منه</label>
+                <label className="block text-xs text-slate-400 mb-1">الحساب المدفوع منه</label>
                 <select
                   value={formData.account_id}
                   onChange={e => setFormData({ ...formData, account_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                 >
                   <option value="">— اختر حساب (للدفع التلقائي) —</option>
                   {accounts.map(acc => (
@@ -409,38 +420,38 @@ export function BillsManager() {
                     type="checkbox"
                     checked={formData.auto_pay}
                     onChange={e => setFormData({ ...formData, auto_pay: e.target.checked })}
-                    className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    className="w-4 h-4 accent-indigo-500 border-slate-700 rounded"
                   />
-                  <span className="text-sm">دفع تلقائي يوم الاستحقاق (يحتاج حساب مختار)</span>
+                  <span className="text-xs text-slate-200">دفع تلقائي يوم الاستحقاق (يحتاج حساب مختار)</span>
                   {formData.auto_pay && !formData.account_id && (
-                    <span className="text-xs text-red-500">⚠️ اختر حساب أولاً</span>
+                    <span className="text-xs text-rose-400">⚠️ اختر حساب أولاً</span>
                   )}
                 </label>
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">ملاحظات</label>
+                <label className="block text-xs text-slate-400 mb-1">ملاحظات</label>
                 <textarea
                   value={formData.notes}
                   onChange={e => setFormData({ ...formData, notes: e.target.value })}
                   rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className={INPUT_CLASS}
                   placeholder="أي ملاحظات إضافية..."
                 />
               </div>
             </div>
 
-            <div className="flex gap-3 pt-4 border-t">
+            <div className="flex gap-3 pt-4 border-t border-slate-800">
               <button
                 type="submit"
-                className="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 transition"
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 px-4 rounded-xl font-bold text-sm transition shadow-lg shadow-indigo-600/30"
               >
                 {editingBill ? "حفظ التعديلات" : "إضافة الفاتورة"}
               </button>
               <button
                 type="button"
                 onClick={resetForm}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm transition"
               >
                 إلغاء
               </button>
@@ -450,39 +461,43 @@ export function BillsManager() {
       )}
 
       {/* Bills List */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {bills.length === 0 ? (
-          <div className="col-span-full text-center py-12 bg-gray-50 rounded-xl">
-            <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-gray-900">مفيش فواتير متكررة لسه</h3>
-            <p className="text-gray-500 mt-1">اضغط &quot;فاتورة جديدة&quot; عشان تبدأ</p>
+          <div className="col-span-full text-center py-12 bg-slate-900/40 rounded-3xl border border-slate-800/60">
+            <Calendar className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+            <h3 className="text-base font-bold text-slate-300">مفيش فواتير متكررة لسه</h3>
+            <p className="text-xs text-slate-500 mt-1">اضغط &quot;فاتورة جديدة&quot; عشان تبدأ</p>
           </div>
         ) : (
           bills.map(bill => (
             <div
               key={bill.id}
-              className={`bg-white border rounded-xl p-4 transition ${
-                bill.is_overdue ? "border-red-200 bg-red-50" :
-                bill.is_due_soon ? "border-yellow-200 bg-yellow-50" :
-                "border-gray-200"
+              className={`glass-panel p-5 rounded-3xl border transition-all duration-300 relative overflow-hidden ${
+                bill.is_overdue
+                  ? "border-rose-500/40 bg-rose-950/20"
+                  : bill.is_due_soon
+                  ? "border-amber-500/40 bg-amber-950/20"
+                  : !bill.is_active
+                  ? "border-slate-800/60 bg-slate-900/40 opacity-70"
+                  : "border-slate-800 bg-slate-900/80 hover:border-indigo-500/40"
               }`}
             >
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-semibold text-gray-900 truncate">{bill.name}</h4>
-                  <p className="text-2xl font-bold text-indigo-600 mt-1">{formatEgp(bill.amount)}</p>
+                  <h4 className="text-base font-bold text-white truncate">{bill.name}</h4>
+                  <p className="text-2xl font-black text-indigo-400 mt-1 tracking-tight">{formatEgp(bill.amount)}</p>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => startEdit(bill)}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                    className="p-1.5 text-slate-500 hover:text-indigo-400 hover:bg-slate-800/60 rounded-xl transition"
                     title="تعديل"
                   >
                     <Edit className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(bill.id)}
-                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-xl transition"
                     title="حذف"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -490,21 +505,21 @@ export function BillsManager() {
                 </div>
               </div>
 
-              <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="px-2 py-0.5 bg-gray-100 rounded">{getFrequencyLabel(bill.frequency)}</span>
-                  <span className="px-2 py-0.5 bg-gray-100 rounded">
+              <div className="space-y-2 text-sm text-slate-400">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-slate-800 text-slate-300 border border-slate-700">{getFrequencyLabel(bill.frequency)}</span>
+                  <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-slate-800 text-slate-300 border border-slate-700">
                     {bill.day_of_month === 31 ? "آخر الشهر" : `يوم ${bill.day_of_month}`}
                   </span>
                   {bill.auto_pay && bill.account_id && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded">
+                    <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                       <Zap className="w-3 h-3" /> تلقائي
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                <div className="flex items-center gap-2 text-xs">
+                  <Calendar className="w-3.5 h-3.5 text-slate-500" />
                   <span>
                     قادم: {new Date(bill.next_due_date).toLocaleDateString("ar-EG", { day: "numeric", month: "long" })}
                     {bill.end_date && ` — ينتهي ${new Date(bill.end_date).toLocaleDateString("ar-EG")}`}
@@ -512,8 +527,8 @@ export function BillsManager() {
                 </div>
 
                 {bill.account_id && (
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-3.5 h-3.5 text-gray-400" />
+                  <div className="flex items-center gap-2 text-xs">
+                    <CreditCard className="w-3.5 h-3.5 text-slate-500" />
                     <span className="truncate">
                       من: {accounts.find(a => a.id === bill.account_id)?.name || "غير معروف"}
                     </span>
@@ -521,18 +536,18 @@ export function BillsManager() {
                 )}
 
                 {bill.notes && (
-                  <div className="text-xs text-gray-500 line-clamp-1">{bill.notes}</div>
+                  <div className="text-xs text-slate-500 line-clamp-1">{bill.notes}</div>
                 )}
               </div>
 
-              <div className="mt-3 pt-3 border-t flex items-center justify-between">
+              <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between">
                 {getStatusBadge(bill)}
                 <button
                   onClick={() => handleToggleActive(bill)}
-                  className={`text-xs px-2 py-1 rounded transition ${
+                  className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition ${
                     bill.is_active
-                      ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      : "bg-indigo-100 text-indigo-600 hover:bg-indigo-200"
+                      ? "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700"
+                      : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30"
                   }`}
                 >
                   {bill.is_active ? "إيقاف" : "تفعيل"}

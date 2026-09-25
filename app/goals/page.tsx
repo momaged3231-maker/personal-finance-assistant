@@ -13,8 +13,24 @@ import {
   CheckCircle,
   AlertTriangle,
   ArrowRight,
+  Clock,
 } from "lucide-react";
 import { formatEgp, egpToPiastres, SavingsGoalItem } from "@/lib/types";
+
+function goalStartLabel(createdAt: string): string {
+  const start = new Date(createdAt);
+  if (isNaN(start.getTime())) return "النهاردة";
+  const now = new Date();
+  const totalDays = Math.floor((now.getTime() - start.getTime()) / 86400000);
+  if (totalDays <= 0) return "النهاردة";
+  const months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+  if (months < 1) return `${totalDays} يوم`;
+  const years = Math.floor(months / 12);
+  const remMonths = months % 12;
+  if (years > 0 && remMonths > 0) return `${years} سنة و${remMonths} شهر`;
+  if (years > 0) return `${years} سنة`;
+  return `${months} شهر`;
+}
 
 export default function GoalsPage() {
   const [goals, setGoals] = useState<SavingsGoalItem[]>([]);
@@ -224,6 +240,10 @@ export default function GoalsPage() {
                         <h4 className="text-base font-bold text-white">{g.title}</h4>
                         <span className="text-xs text-slate-400">
                           {g.target_date ? `الموعد المستهدف: ${g.target_date}` : "هدف مستمر"}
+                        </span>
+                        <span className="text-[11px] font-semibold text-amber-400 inline-flex items-center gap-1 mt-0.5">
+                          <Clock className="w-3 h-3" />
+                          التحويش من {goalStartLabel(g.created_at)}
                         </span>
                       </div>
                     </div>
