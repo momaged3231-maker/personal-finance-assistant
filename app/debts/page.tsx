@@ -16,6 +16,7 @@ import {
   Wallet,
   Pencil,
   Bell,
+  CalendarClock,
 } from "lucide-react";
 import { formatEgp, egpToPiastres, DebtItem, GamEyaMeta, GamEyaInstallment } from "@/lib/types";
 
@@ -25,6 +26,7 @@ export default function DebtsPage() {
   const [gamSchedules, setGamSchedules] = useState<Record<number, GamEyaInstallment[]>>({});
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<"all" | "gam_eya" | "i_owe" | "owed_to_me">("all");
+  const [periodType, setPeriodType] = useState<"all" | "today" | "week" | "month" | "year">("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<DebtItem | null>(null);
@@ -300,13 +302,6 @@ export default function DebtsPage() {
     .filter((d) => d.type === "owed_to_me" && d.status === "pending")
     .reduce((sum, d) => sum + (d.amount - d.paid_amount), 0);
 
-  const filteredDebts = debts.filter((d) => {
-    if (filterType === "all") return true;
-    return d.type === filterType;
-  });
-
-  // Payment notifications (overdue + due within 14 days), including
-  // gam'eya next-installment dates derived from the schedule
   const daysDiff = (due: string) => {
     const dueDate = new Date(due.length <= 10 ? due + "T00:00:00" : due);
     const now = new Date();
@@ -314,6 +309,46 @@ export default function DebtsPage() {
     return Math.round((dueDate.getTime() - now.getTime()) / 86400000);
   };
 
+  const getNextDue = (d: DebtItem): string | null => {
+    if (d.type === "gam_eya" && gamSchedules[d.id]?.length) {
+      const next = gamSchedules[d.id].find((inst) => !inst.paid && inst.dueDate);
+      if (next?.dueDate) return next.dueDate;
+    }
+    return d.due_date || null;
+  };
+
+  const periodClassify = (d: DebtItem): typeof periodType | null => {
+    const due = getNextDue(d);
+    if (!due) return null;
+    const days = daysDiff(due);
+    if (days === 0) return "today";
+    if (days >= 1 && days <= 7) return "week";
+    if (days >= 8 && days <= 30) return "month";
+    if (days >= 31 && days <= 365) return "year";
+    return null;
+  };
+
+  const filteredDebts = debts.filter((d) => {
+    if (filterType !== "all" && d.type !== filterType) return false;
+    if (periodType !== "all" && periodClassify(d) !== periodType) return false;
+    return true;
+  });
+
+  const periodOptions: Array<{ id: typeof periodType; label: string }> = [
+    { id: "all", label: "كل المواعيد" },
+    { id: "today", label: "النهاردة" },
+    { id: "week", label: "خلال أسبوع" },
+    { id: "month", label: "خلال شهر" },
+    { id: "year", label: "خلال سنة" },
+  ];
+
+  const periodCount = (id: typeof periodType): number => {
+    if (id === "all") return filteredDebts.length;
+    return debts.filter((d) => periodClassify(d) === id && (filterType === "all" || d.type === filterType)).length;
+  };
+
+  // Payment notifications (overdue + due within 14 days), including
+  // gam'eya next-installment dates derived from the schedule
   const notificationItems: Array<
     { d: DebtItem; days: number; label: string; remaining: number; dates: string[] }
   > = [];
@@ -474,26 +509,54 @@ export default function DebtsPage() {
           </div>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="flex items-center gap-2 border-b border-slate-800 pb-3 mb-6 overflow-x-auto">
-          {[
-            { id: "all", label: "الكل" },
-            { id: "gam_eya", label: "الجمعيات الشهرية" },
-            { id: "i_owe", label: "ديون عليّ" },
-            { id: "owed_to_me", label: "فلوس ليا برة" },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setFilterType(tab.id as typeof filterType)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                filterType === tab.id
-                  ? "bg-slate-800 text-white border border-slate-700 shadow-md"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Filter Tabs: type + period */}
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-3 mb-6 space-y-3">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {[
+              { id: "all", label: "الكل" },
+              { id: "gam_eya", label: "الجمعيات الشهرية" },
+              { id: "i_owe", label: "ديون عليّ" },
+              { id: "owed_to_me", label: "فلوس ليا برة" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setFilterType(tab.id as typeof filterType)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                  filterType === tab.id
+                    ? "bg-slate-800 text-white border border-slate-700 shadow-md"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10px] font-bold text-slate-500 shrink-0 flex items-center gap-1">
+              <CalendarClock className="w-3.5 h-3.5" />
+              المواعيد:
+            </span>
+            {periodOptions.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setPeriodType(tab.id)}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
+                  periodType === tab.id
+                    ? "bg-indigo-600 text-white border border-indigo-500 shadow-md"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                }`}
+              >
+                {tab.label}
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[9px] font-black ${
+                    periodType === tab.id ? "bg-white/20 text-white" : "bg-slate-800 text-slate-300"
+                  }`}
+                >
+                  {periodCount(tab.id)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Debts Grid */}
