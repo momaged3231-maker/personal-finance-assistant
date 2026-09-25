@@ -17,7 +17,6 @@ import {
   Pencil,
   Bell,
 } from "lucide-react";
-import Navbar from "@/components/Navbar";
 import { formatEgp, egpToPiastres, DebtItem, GamEyaMeta, GamEyaInstallment } from "@/lib/types";
 
 export default function DebtsPage() {
@@ -375,7 +374,6 @@ export default function DebtsPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-24 md:pb-12" dir="rtl">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <Navbar />
 
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-6 mb-8">
