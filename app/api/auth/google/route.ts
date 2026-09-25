@@ -30,16 +30,15 @@ export async function POST(req: NextRequest) {
     }
 
     const accessToken = String(body.accessToken || "");
-    const clientEmail = String(body.email || "").trim().toLowerCase();
-    const clientName = String(body.name || "").trim().slice(0, 120);
     const plan = String(body.plan || "monthly");
 
-    if (!accessToken || !clientEmail.includes("@")) {
+    if (!accessToken) {
       return NextResponse.json({ error: "بيانات غير صالحة" }, { status: 400 });
     }
 
-    // Always verify the token with GoTrue server-side first — never trust the
-    // client-supplied email on its own.
+    // The token is the single source of truth: verify it with GoTrue
+    // server-side and derive the email/name from the verified user — never
+    // from the client-supplied body.
     const client = requireSupabase();
     const { data: tokenResult, error: tokenError } = await client.auth.getUser(accessToken);
     if (tokenError || !tokenResult?.user?.email) {
@@ -47,9 +46,6 @@ export async function POST(req: NextRequest) {
     }
 
     const verifiedEmail = tokenResult.user.email.toLowerCase();
-    if (verifiedEmail !== clientEmail) {
-      return NextResponse.json({ error: "بيانات غير متطابقة" }, { status: 401 });
-    }
 
     const now = new Date();
     const expiresAt = new Date(
@@ -58,7 +54,6 @@ export async function POST(req: NextRequest) {
 
     const meta = tokenResult.user.user_metadata || {};
     const googleName =
-      clientName ||
       String(meta.full_name || meta.name || "") ||
       verifiedEmail.split("@")[0];
 

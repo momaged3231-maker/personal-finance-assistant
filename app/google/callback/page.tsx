@@ -3,9 +3,21 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import { getBrowserSupabase } from "@/lib/supabase-browser";
 
 type Stage = "processing" | "error" | "done";
+
+function parseHashTokens(hash: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
+  for (const pair of trimmed.split("&")) {
+    const idx = pair.indexOf("=");
+    if (idx === -1) continue;
+    const key = decodeURIComponent(pair.slice(0, idx));
+    const value = decodeURIComponent(pair.slice(idx + 1));
+    params[key] = value;
+  }
+  return params;
+}
 
 function GoogleCallbackInner() {
   const [stage, setStage] = useState<Stage>("processing");
@@ -16,13 +28,6 @@ function GoogleCallbackInner() {
 
     (async () => {
       try {
-        const sb = getBrowserSupabase();
-        if (!sb) {
-          setStage("error");
-          setMessage("خدمة تسجيل الدخول عبر جوجل غير مهيأة حالياً.");
-          return;
-        }
-
         const url = new URL(window.location.href);
         if (url.searchParams.get("error")) {
           setStage("error");
@@ -30,35 +35,25 @@ function GoogleCallbackInner() {
           return;
         }
 
-        const code = url.searchParams.get("code");
-        let session = null;
+        // Implicit grant: GoTrue returns the tokens in the URL fragment.
+        const tokens = parseHashTokens(window.location.hash);
+        const accessToken = tokens.access_token;
 
-        if (code) {
-          // PKCE: exchange the one-time code for a session.
-          const { data, error } = await sb.auth.exchangeCodeForSession(code);
-          if (error) throw new Error(error.message);
-          session = data.session;
-        } else {
-          const { data, error } = await sb.auth.getSession();
-          if (error) throw new Error(error.message);
-          session = data.session;
+        if (!accessToken) {
+          setStage("error");
+          setMessage("لم يتم العثور على جلسة جوجل صالحة. يرجى المحاولة مرة أخرى.");
+          return;
         }
 
-        if (!session?.user?.email) {
-          throw new Error("لم يتم العثور على جلسة جوجل صالحة.");
-        }
-
-        const meta = session.user.user_metadata || {};
-        const email = session.user.email;
-        const name = String(meta.full_name || meta.name || "") || email.split("@")[0];
+        // Clean the tokens out of the address bar before we continue.
+        const cleanUrl = window.location.href.split("#")[0];
+        window.history.replaceState(window.history.state, "", cleanUrl);
 
         const res = await fetch("/api/auth/google", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accessToken: session.access_token,
-            email,
-            name,
+            accessToken,
             plan: url.searchParams.get("plan") || "monthly",
           }),
         });
@@ -67,10 +62,6 @@ function GoogleCallbackInner() {
         if (!res.ok || data.error) {
           throw new Error(data.error || "تعذر الاتصال بالخادم.");
         }
-
-        // We use our own signed cookie (not GoTrue's), so discard the local
-        // GoTrue session and its tokens from browser storage.
-        await sb.auth.signOut().catch(() => {});
 
         if (!cancelled) {
           setStage("done");

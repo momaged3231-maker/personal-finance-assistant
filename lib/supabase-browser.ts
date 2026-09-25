@@ -11,9 +11,10 @@ const supabaseAnonKey =
 let clientInstance: SupabaseClient | null = null;
 
 /**
- * Returns a browser-side Supabase client used solely for the Google OAuth flow.
- * We keep GoTrue's local session so the PKCE code verifier survives the redirect
- * back to /google/callback, then discard it after our own signed cookie is set.
+ * Returns a browser-side Supabase client used solely to start the Google OAuth
+ * flow. We use the implicit grant (tokens returned in the URL fragment) so no
+ * PKCE code verifier needs to survive the redirect round-trip — the callback
+ * page hands the access token straight to our own API, which validates it.
  */
 export function getBrowserSupabase(): SupabaseClient | null {
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -24,7 +25,7 @@ export function getBrowserSupabase(): SupabaseClient | null {
       auth: {
         persistSession: true,
         autoRefreshToken: false,
-        flowType: "pkce",
+        flowType: "implicit",
         detectSessionInUrl: true,
       },
     });
