@@ -4,23 +4,17 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Settings as SettingsIcon,
-  Shield,
   Coins,
   Wallet,
   Tags,
   Bot,
-  Database,
   Check,
   Plus,
   Trash2,
-  Lock,
-  Download,
   AlertTriangle,
   Loader2,
-  UserCheck,
   Calculator,
   RefreshCw,
-  Cloud,
   CheckCircle2,
   Zap,
 } from "lucide-react";
@@ -36,34 +30,18 @@ interface Category {
 export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    "roles" | "finance" | "accounts" | "categories" | "ai" | "backup" | "supabase"
-  >("roles");
+    "finance" | "accounts" | "categories" | "ai"
+  >("finance");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
-
-  // Supabase State
-  const [supabaseStatus, setSupabaseStatus] = useState<{
-    configured?: boolean;
-    connected?: boolean;
-    message?: string;
-    error?: string;
-    hint?: string;
-  } | null>(null);
-  const [checkingSupabase, setCheckingSupabase] = useState(false);
-  const [migratingSupabase, setMigratingSupabase] = useState(false);
 
   // Financial Settings
   const [salary, setSalary] = useState("12000");
   const [shopCut, setShopCut] = useState("10");
   const [userCut, setUserCut] = useState("50");
   const [currency, setCurrency] = useState("ج.م");
-
-  // Roles & Security
-  const [currentRole, setCurrentRole] = useState("admin"); // 'admin' | 'entry' | 'viewer'
-  const [pinLock, setPinLock] = useState(false);
-  const [pinCode, setPinCode] = useState("");
 
   // AI Settings
   const [openAiKey, setOpenAiKey] = useState("");
@@ -102,9 +80,6 @@ export default function SettingsPage() {
     if (s.maintenance_shop_cut) setShopCut(s.maintenance_shop_cut);
     if (s.maintenance_user_cut) setUserCut(s.maintenance_user_cut);
     if (s.currency_symbol) setCurrency(s.currency_symbol);
-    if (s.current_role) setCurrentRole(s.current_role);
-    if (s.require_pin) setPinLock(s.require_pin === "true");
-    if (s.security_pin) setPinCode(s.security_pin);
     if (s.openai_key) setOpenAiKey(s.openai_key);
     if (s.ai_tone) setAiTone(s.ai_tone);
     if (s.ai_provider === "openai" || s.ai_provider === "openrouter") setAiProvider(s.ai_provider);
@@ -347,96 +322,6 @@ export default function SettingsPage() {
     }
   }
 
-  // Backup Export
-  async function handleExportBackup() {
-    try {
-      const res = await fetch("/api/finance?view=backup");
-      if (res.ok) {
-        const json = await res.json();
-        const blob = new Blob([JSON.stringify(json, null, 2)], {
-          type: "application/json",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `finance-backup-${new Date().toISOString().split("T")[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        notify("تم تنزيل النسخة الاحتياطية بنجاح!");
-      }
-    } catch {
-      notify("فشل التصدير", "error");
-    }
-  }
-
-  // Clear / Reset demo transactions
-  async function handleResetData() {
-    const confirmation = prompt(
-      'تحذير: هذا الإجراء سيقوم بمسح جميع العمليات المالية المسجلة.\nللتأكيد اكتب كلمة: "تأكيد"'
-    );
-    if (confirmation !== "تأكيد") {
-      notify("تم إلغاء تصفير البيانات", "error");
-      return;
-    }
-
-    try {
-      const res = await fetch("/api/finance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset_data" }),
-      });
-      if (res.ok) {
-        notify("تم تصفير جميع العمليات بنجاح!");
-        loadData();
-      }
-    } catch {
-      notify("فشل التصفير", "error");
-    }
-  }
-
-  // Check Supabase status
-  async function checkSupabase() {
-    setCheckingSupabase(true);
-    try {
-      const res = await fetch("/api/supabase");
-      const json = await res.json();
-      setSupabaseStatus(json);
-      if (json.connected) {
-        notify("تم التحقق: الاتصال بقاعدة بيانات Supabase يعمل بشكل ممتاز!");
-      } else if (json.configured) {
-        notify(json.error || "يحتاج تشغيل ملف SQL في Supabase", "error");
-      }
-    } catch {
-      notify("تعذر فحص اتصال Supabase", "error");
-    } finally {
-      setCheckingSupabase(false);
-    }
-  }
-
-  // Migrate SQLite data to Supabase
-  async function handleMigrateToSupabase() {
-    if (!confirm("هل تريد ترحيل جميع بياناتك من SQLite إلى Supabase السحابية الآن؟")) return;
-    setMigratingSupabase(true);
-    try {
-      const res = await fetch("/api/supabase", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "migrate_to_supabase" }),
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        notify(json.message);
-        checkSupabase();
-      } else {
-        notify(json.error || "فشل ترحيل البيانات", "error");
-      }
-    } catch {
-      notify("فشل الاتصال بـ Supabase", "error");
-    } finally {
-      setMigratingSupabase(false);
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] gap-3 text-slate-400">
@@ -453,10 +338,10 @@ export default function SettingsPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
             <SettingsIcon className="w-6 h-6 text-blue-400" />
-            <span>إعدادات النظام والصلاحيات</span>
+            <span>إعدادات النظام</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            تحكم كامل في كل كبيرة وصغيرة: الصلاحيات، الحسابات، النسب والعمولات
+            تحكم كامل في الحسابات، التصنيفات، الرواتب والعمولات، وإعدادات المساعد الذكي
           </p>
         </div>
 
@@ -476,13 +361,10 @@ export default function SettingsPage() {
       {/* Tabs Navigation */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800 scrollbar-none">
         {[
-          { id: "roles", label: "الأدوار والصلاحيات", icon: Shield },
           { id: "finance", label: "الرواتب والعمولات", icon: Coins },
           { id: "accounts", label: "إدارة الحسابات", icon: Wallet },
           { id: "categories", label: "التصنيفات", icon: Tags },
           { id: "ai", label: "المساعد الذكي", icon: Bot },
-          { id: "supabase", label: "سحابة Supabase", icon: Cloud },
-          { id: "backup", label: "النسخ الاحتياطي", icon: Database },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -503,133 +385,7 @@ export default function SettingsPage() {
         })}
       </div>
 
-      {/* TAB 1: ROLES & PERMISSIONS */}
-      {activeTab === "roles" && (
-        <div className="space-y-6">
-          <div className="glass-card p-6 rounded-3xl space-y-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-blue-400" />
-              الأدوار وصلاحيات الوصول للنظام (Roles & Access Control)
-            </h2>
-            <p className="text-xs text-slate-400">
-              حدد الدور النشط للنظام للتحكم في ما يمكن للواجهة عرضه أو تنفيذه
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-              {/* Role 1: Owner / Admin */}
-              <div
-                onClick={() => {
-                  setCurrentRole("admin");
-                  handleSaveSetting("current_role", "admin", "تم تفعيل دور: المدير المالي الكامل");
-                }}
-                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                  currentRole === "admin"
-                    ? "bg-blue-600/15 border-blue-500 text-white shadow-lg shadow-blue-600/10"
-                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-extrabold text-white">👑 المدير المالي (Owner)</span>
-                  {currentRole === "admin" && <Check className="w-4 h-4 text-blue-400" />}
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  كامل الصلاحيات بلا قيود: تسجيل المعاملات، تعديلها، حذفها، تغيير قواعد العمولات والرواتب، والتحكم بالحسابات.
-                </p>
-              </div>
-
-              {/* Role 2: Data Entry */}
-              <div
-                onClick={() => {
-                  setCurrentRole("entry");
-                  handleSaveSetting("current_role", "entry", "تم تفعيل دور: مدخل بيانات فقط");
-                }}
-                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                  currentRole === "entry"
-                    ? "bg-amber-600/15 border-amber-500 text-white shadow-lg shadow-amber-600/10"
-                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-extrabold text-white">✍️ مدخل بيانات (Data Entry)</span>
-                  {currentRole === "entry" && <Check className="w-4 h-4 text-amber-400" />}
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  صلاحية تسجيل المصروفات والدخل اليومي فقط. يتم تقييد حذف العمليات وتعديل الإعدادات الأساسية.
-                </p>
-              </div>
-
-              {/* Role 3: Viewer / Audit */}
-              <div
-                onClick={() => {
-                  setCurrentRole("viewer");
-                  handleSaveSetting("current_role", "viewer", "تم تفعيل دور: مستعرض الحسابات");
-                }}
-                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                  currentRole === "viewer"
-                    ? "bg-emerald-600/15 border-emerald-500 text-white shadow-lg shadow-emerald-600/10"
-                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-extrabold text-white">👁️ مراجع / مشاهد (Viewer)</span>
-                  {currentRole === "viewer" && <Check className="w-4 h-4 text-emerald-400" />}
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  عرض الأرصدة والتقارير والشريط الزمني فقط دون إمكانية إضافة أو تعديل أي معاملات مالية.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* PIN Lock Protection */}
-          <div className="glass-card p-6 rounded-3xl space-y-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Lock className="w-5 h-5 text-indigo-400" />
-              حماية الخصوصية برقم سري (PIN Lock)
-            </h2>
-            <p className="text-xs text-slate-400">
-              قفل التطبيق برقم سري مكون من 4 أرقام عند فتحه لمنع المتطفلين من رؤية أرصدتك
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
-              <div className="flex items-center gap-3">
-                <input
-                  type="password"
-                  maxLength={4}
-                  placeholder="مثال: 1234"
-                  value={pinCode}
-                  onChange={(e) => setPinCode(e.target.value)}
-                  className="w-32 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-center text-lg font-bold tracking-widest text-white focus:outline-none focus:border-indigo-500"
-                />
-                <button
-                  onClick={() => {
-                    handleSaveSetting("security_pin", pinCode);
-                    handleSaveSetting("require_pin", "true", "تم تفعيل القفل برقم سري بنجاح!");
-                    setPinLock(true);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/20"
-                >
-                  حفظ وتفعيل القفل
-                </button>
-              </div>
-
-              {pinLock && (
-                <button
-                  onClick={() => {
-                    handleSaveSetting("require_pin", "false", "تم تعطيل القفل");
-                    setPinLock(false);
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold hover:bg-rose-500/20"
-                >
-                  تعطيل القفل
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: SALARY & MAINTENANCE RULES */}
+      {/* TAB 1: SALARY & MAINTENANCE RULES */}
       {activeTab === "finance" && (
         <div className="glass-card p-6 rounded-3xl space-y-6">
           <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -1127,186 +883,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* TAB 6: BACKUP & DATA RESET */}
-      {activeTab === "backup" && (
-        <div className="glass-card p-6 rounded-3xl space-y-6">
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Database className="w-5 h-5 text-blue-400" />
-            النسخ الاحتياطي وإدارة البيانات
-          </h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Export */}
-            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Download className="w-4 h-4 text-emerald-400" />
-                تصدير نسخة احتياطية كاملة (JSON)
-              </h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                حمّل ملف يحتوي على كل الحسابات، العمليات المالية، التصنيفات، والإعدادات الخاصة بك للاحتفاظ بها.
-              </p>
-              <button
-                onClick={handleExportBackup}
-                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all"
-              >
-                تنزيل النسخة الاحتياطية الآن
-              </button>
-            </div>
-
-            {/* Clear Data */}
-            <div className="p-5 rounded-2xl bg-rose-950/20 border border-rose-500/30 space-y-3">
-              <h3 className="text-sm font-bold text-rose-400 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
-                تصفير بيانات العمليات (Reset)
-              </h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                حذف كل المعاملات المالية المسجلة للبدء بسجل نظيف، مع الحفاظ على الحسابات والإعدادات.
-              </p>
-              <button
-                onClick={handleResetData}
-                className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition-all"
-              >
-                تصفير العمليات بالكامل
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 7: SUPABASE CLOUD DATABASE */}
-      {activeTab === "supabase" && (
-        <div className="glass-card p-6 rounded-3xl space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Cloud className="w-5 h-5 text-emerald-400" />
-                ربط وتكامل قاعدة بيانات Supabase السحابية (PostgreSQL)
-              </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                توصيل النظام بقاعدة بيانات سحابية دائمة لضمان بقاء البيانات بعد نشر المشروع على Vercel
-              </p>
-            </div>
-
-            <button
-              onClick={checkSupabase}
-              disabled={checkingSupabase}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 transition"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${checkingSupabase ? "animate-spin" : ""}`} />
-              فحص الاتصال بـ Supabase
-            </button>
-          </div>
-
-          {/* Status Display Card */}
-          {supabaseStatus && (
-            <div
-              className={`p-4 rounded-2xl border text-xs space-y-2 ${
-                supabaseStatus.connected
-                  ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
-                  : supabaseStatus.configured
-                  ? "bg-amber-950/20 border-amber-500/40 text-amber-300"
-                  : "bg-slate-900 border-slate-800 text-slate-300"
-              }`}
-            >
-              <div className="flex items-center gap-2 font-bold">
-                {supabaseStatus.connected ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                ) : (
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />
-                )}
-                <span>
-                  {supabaseStatus.connected
-                    ? "الاتصال نشط وقاعدة البيانات جاهزة للعمل على Vercel و Supabase"
-                    : supabaseStatus.configured
-                    ? "تم العثور على المفاتيح، ولكن الجداول غير مكتملة"
-                    : "المتغيرات غير مضبوطة في البيئة (.env)"}
-                </span>
-              </div>
-              <p className="text-[11px] opacity-90">{supabaseStatus.message || supabaseStatus.error}</p>
-              {supabaseStatus.hint && (
-                <p className="text-[11px] font-semibold text-amber-400">💡 {supabaseStatus.hint}</p>
-              )}
-            </div>
-          )}
-
-          {/* Setup Steps */}
-          <div className="space-y-4 text-xs">
-            <h3 className="font-bold text-slate-200">خطوات تشغيل وربط Supabase مع Vercel في 3 خطوات:</h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {/* Step 1 */}
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
-                <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-black text-xs flex items-center justify-center border border-blue-500/30">
-                  1
-                </span>
-                <h4 className="font-bold text-white">إنشاء مشروع Supabase</h4>
-                <p className="text-[11px] text-slate-400">
-                  افتح موقع supabase.com وأنشئ مشروع جديد مجاني، ثم انسخ رابط المشروع والمفتاح العام (anon key).
-                </p>
-              </div>
-
-              {/* Step 2 */}
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
-                <span className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 font-black text-xs flex items-center justify-center border border-indigo-500/30">
-                  2
-                </span>
-                <h4 className="font-bold text-white">تشغيل ملف SQL</h4>
-                <p className="text-[11px] text-slate-400">
-                  في Supabase افتح SQL Editor والصق محتوى ملف <code>supabase_schema.sql</code> الموجود بمشروعك واضغط Run.
-                </p>
-              </div>
-
-              {/* Step 3 */}
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
-                <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-black text-xs flex items-center justify-center border border-emerald-500/30">
-                  3
-                </span>
-                <h4 className="font-bold text-white">إضافة المتغيرات في Vercel</h4>
-                <p className="text-[11px] text-slate-400">
-                  في إعدادات مشروعك على Vercel (Environment Variables) أضف المتغيرين:
-                  <br />
-                  <code className="text-blue-400">NEXT_PUBLIC_SUPABASE_URL</code>
-                  <br />
-                  <code className="text-blue-400">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Action: 1-Click Migration */}
-          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/20 via-slate-900 to-slate-900 border border-emerald-500/30 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
-                  <Cloud className="w-4 h-4" />
-                  ترحيل ونقل جميع البيانات المحلية إلى Supabase
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  يقوم بنسخ ونقل جميع الحسابات والمعاملات والأهداف والجمعيات المسجلة حالياً إلى قاعدة Supabase بضغطة واحدة
-                </p>
-              </div>
-
-              <button
-                onClick={handleMigrateToSupabase}
-                disabled={migratingSupabase}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition flex items-center gap-2 self-start sm:self-auto"
-              >
-                {migratingSupabase ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    جاري نقل البيانات...
-                  </>
-                ) : (
-                  <>
-                    <Cloud className="w-3.5 h-3.5" />
-                    ترحيل البيانات الآن 🚀
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      </div>
   );
 }

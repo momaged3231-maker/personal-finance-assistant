@@ -19,6 +19,7 @@ import {
   ArrowLeft,
   Crown,
   Zap,
+  Receipt,
 } from "lucide-react";
 import { UserRecord } from "@/lib/types";
 
@@ -79,10 +80,11 @@ export default function Navbar() {
   const links = [
     { href: "/", label: "الرئيسية", icon: LayoutDashboard },
     { href: "/day", label: "اليوم", icon: CalendarDays },
+    { href: "/assistant", label: "المساعد", icon: Bot, highlight: true },
     { href: "/debts", label: "الجمعيات والديون", icon: Users },
     { href: "/goals", label: "الأهداف", icon: Target },
+    { href: "/bills", label: "الفواتير", icon: Receipt },
     { href: "/analytics", label: "الميزانيات", icon: BarChart3 },
-    { href: "/assistant", label: "المساعد", icon: Bot, highlight: true },
     { href: "/settings", label: "الإعدادات", icon: Settings },
   ];
 
@@ -198,13 +200,15 @@ export default function Navbar() {
                 })}
               </nav>
 
-              <Link
-                href="/landing"
-                className="px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-bold transition-all"
-                title="صفحة التعريف والاشتراكات"
-              >
-                الموقع
-              </Link>
+              {session && !session.authenticated && (
+                <Link
+                  href="/landing"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-bold transition-all"
+                  title="صفحة التعريف والاشتراكات"
+                >
+                  الموقع
+                </Link>
+              )}
 
               {(session?.user?.is_admin || session?.user?.id === 1) && (
                 <Link
@@ -270,11 +274,19 @@ export default function Navbar() {
                 الأهداف
               </Link>
               <Link
-                href="/landing"
+                href="/bills"
                 className="px-2.5 py-1.5 rounded-xl bg-slate-900 text-slate-300 text-xs font-medium border border-slate-800"
               >
-                الموقع
+                الفواتير
               </Link>
+              {!session?.authenticated && (
+                <Link
+                  href="/landing"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-900 text-slate-300 text-xs font-medium border border-slate-800"
+                >
+                  الموقع
+                </Link>
+              )}
               {session?.authenticated ? (
                 <button
                   onClick={handleLogout}
@@ -300,7 +312,10 @@ export default function Navbar() {
       {!isGuestLanding && (
         <div className="md:hidden fixed bottom-3 left-3 right-3 z-50">
           <nav className="card-fintech bg-slate-950/95 border border-slate-800/80 rounded-2xl p-1.5 flex items-center justify-around shadow-2xl shadow-black/80 backdrop-blur-xl">
-          {links.slice(0, 5).map((item) => {
+          {links
+            .filter((item) => item.href !== "/assistant")
+            .slice(0, 5)
+            .map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (

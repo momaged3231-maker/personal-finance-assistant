@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
+import { isCurrentUserAdmin } from "@/lib/auth";
 
 export async function GET() {
   try {
+    if (!(await isCurrentUserAdmin())) {
+      return NextResponse.json(
+        { error: "هذا الإجراء متاح للإدارة فقط" },
+        { status: 403 }
+      );
+    }
     const configured = isSupabaseConfigured();
     if (!configured) {
       return NextResponse.json({

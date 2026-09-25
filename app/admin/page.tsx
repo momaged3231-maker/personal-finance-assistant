@@ -31,6 +31,11 @@ import {
   Sliders,
   Shield,
   Crown,
+  LayoutDashboard,
+  Check,
+  Cloud,
+  Database,
+  Download,
 } from "lucide-react";
 import { UserRecord, BlockedDeviceRecord, LiveVisitorRecord } from "@/lib/types";
 
@@ -52,7 +57,7 @@ export default function AdminDashboardPage() {
   const [data, setData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState<"users" | "monetization" | "platform" | "security" | "traffic">("users");
+  const [activeTab, setActiveTab] = useState<"overview" | "users" | "monetization" | "platform" | "security" | "traffic">("overview");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   // Impersonation state
@@ -83,6 +88,24 @@ export default function AdminDashboardPage() {
   const [vodafoneCashNumber, setVodafoneCashNumber] = useState("01000000000");
   const [freeAiLimit, setFreeAiLimit] = useState("15");
   const [savingSettings, setSavingSettings] = useState(false);
+
+  // Supabase & Backup state (ported from settings)
+  const [supabaseStatus, setSupabaseStatus] = useState<{
+    connected: boolean;
+    configured: boolean;
+    message?: string;
+    error?: string;
+    hint?: string;
+  } | null>(null);
+  const [checkingSupabase, setCheckingSupabase] = useState(false);
+  const [migratingSupabase, setMigratingSupabase] = useState(false);
+
+  // Active role state (ported from settings)
+  const [currentRole, setCurrentRole] = useState("admin");
+
+  // PIN lock state (ported from settings)
+  const [pinCode, setPinCode] = useState("");
+  const [pinLock, setPinLock] = useState(false);
 
   const fetchAdminData = useCallback(async () => {
     try {
@@ -363,6 +386,110 @@ export default function AdminDashboardPage() {
     }
   }
 
+  // Save platform-level setting (roles / PIN) via finance API
+  async function handleSavePlatformSetting(key: string, value: string, successMsg?: string) {
+    try {
+      const res = await fetch("/api/finance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update_setting", key, value }),
+      });
+      if (res.ok) {
+        notify(successMsg || "تم حفظ الإعداد بنجاح!");
+      }
+    } catch {
+      notify("حدث خطأ أثناء الحفظ", "error");
+    }
+  }
+
+  // Backup Export
+  async function handleExportBackup() {
+    try {
+      const res = await fetch("/api/finance?view=backup");
+      if (res.ok) {
+        const json = await res.json();
+        const blob = new Blob([JSON.stringify(json, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `finance-backup-${new Date().toISOString().split("T")[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        notify("تم تنزيل النسخة الاحتياطية بنجاح!");
+      }
+    } catch {
+      notify("فشل التصدير", "error");
+    }
+  }
+
+  // Check Supabase status
+  async function checkSupabase() {
+    setCheckingSupabase(true);
+    try {
+      const res = await fetch("/api/supabase");
+      const json = await res.json();
+      setSupabaseStatus(json);
+      if (json.connected) {
+        notify("تم التحقق: الاتصال بقاعدة بيانات Supabase يعمل بشكل ممتاز!");
+      } else if (json.configured) {
+        notify(json.error || "يحتاج تشغيل ملف SQL في Supabase", "error");
+      }
+    } catch {
+      notify("تعذر فحص اتصال Supabase", "error");
+    } finally {
+      setCheckingSupabase(false);
+    }
+  }
+
+  // Migrate SQLite data to Supabase
+  async function handleMigrateToSupabase() {
+    if (!confirm("هل تريد ترحيل جميع بياناتك من SQLite إلى Supabase السحابية الآن؟")) return;
+    setMigratingSupabase(true);
+    try {
+      const res = await fetch("/api/supabase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "migrate_to_supabase" }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        notify(json.message);
+        checkSupabase();
+      } else {
+        notify(json.error || "فشل ترحيل البيانات", "error");
+      }
+    } catch {
+      notify("فشل الاتصال بـ Supabase", "error");
+    } finally {
+      setMigratingSupabase(false);
+    }
+  }
+
+  // Clear / Reset transactions
+  async function handleResetData() {
+    const confirmation = prompt(
+      'تحذير: هذا الإجراء سيقوم بمسح جميع العمليات المالية المسجلة.\nللتأكيد اكتب كلمة: "تأكيد"'
+    );
+    if (confirmation !== "تأكيد") {
+      notify("تم إلغاء تصفير البيانات", "error");
+      return;
+    }
+    try {
+      const res = await fetch("/api/finance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_data" }),
+      });
+      if (res.ok) {
+        notify("تم تصفير جميع العمليات بنجاح!");
+      }
+    } catch {
+      notify("فشل التصفير", "error");
+    }
+  }
+
   if (loading || !data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] gap-3 text-slate-400">
@@ -380,8 +507,124 @@ export default function AdminDashboardPage() {
   );
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Impersonation Banner if active */}
+    <div className="flex flex-col lg:flex-row gap-6 animate-in fade-in duration-300">
+      {/* Sidebar Navigation */}
+      <aside className="lg:w-60 shrink-0 lg:sticky lg:top-24 self-start h-fit">
+        <div className="card-fintech p-3.5 space-y-2">
+          <div className="flex items-center gap-2.5 px-2 pb-3.5 border-b border-slate-800">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+              <ShieldAlert className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <span className="text-sm font-black text-white block">لوحة التحكم</span>
+              <span className="text-[10px] text-slate-500">Super Admin Command Center</span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "overview"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>نظرة عامة</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "users"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Users className="w-4 h-4" />
+              <span>المشتركون</span>
+            </span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ${
+                activeTab === "users" ? "bg-slate-950/15" : "bg-slate-800 text-slate-300"
+              }`}
+            >
+              {data.users.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("monetization")}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "monetization"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>التحصيل والأسعار</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("platform")}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "platform"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+            <span>المنظومة والإعدادات</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("security")}
+            className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "security"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Shield className="w-4 h-4" />
+              <span>الأمان والأجهزة</span>
+            </span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ${
+                activeTab === "security" ? "bg-slate-950/15" : "bg-slate-800 text-slate-300"
+              }`}
+            >
+              {data.blockedDevices.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("traffic")}
+            className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "traffic"
+                ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Radio className="w-4 h-4" />
+              <span>الحركة المباشرة</span>
+            </span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ${
+                activeTab === "traffic" ? "bg-slate-950/15" : "bg-slate-800 text-slate-300"
+              }`}
+            >
+              {data.liveVisitors.length}
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Column */}
+      <div className="flex-1 min-w-0 space-y-6">
+        {/* Impersonation Banner if active */}
       {impersonatedUser && (
         <div className="p-4 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-between text-amber-200 shadow-xl shadow-amber-950/20 animate-pulse">
           <div className="flex items-center gap-3">
@@ -439,112 +682,213 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* KPI Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <div className="card-fintech p-4 border-t-2 border-t-sky-500">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-400">إجمالي المسجلين</span>
-            <Users className="w-4 h-4 text-sky-400" />
+      {/* TAB 0: OVERVIEW (نظرة عامة) */}
+      {activeTab === "overview" && (
+        <div className="space-y-6">
+          {/* KPI Stats Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="card-fintech p-4 border-t-2 border-t-sky-500">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400">إجمالي المسجلين</span>
+                <Users className="w-4 h-4 text-sky-400" />
+              </div>
+              <span className="text-2xl font-black text-white">{data.stats.totalUsers} مستخدم</span>
+            </div>
+
+            <div className="card-fintech p-4 border-t-2 border-t-emerald-500">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400">المشتركين المؤكدين</span>
+                <CreditCard className="w-4 h-4 text-emerald-400" />
+              </div>
+              <span className="text-2xl font-black text-emerald-400">
+                {data.stats.paidSubscriptions} مدفوع
+              </span>
+            </div>
+
+            <div className="card-fintech p-4 border-t-2 border-t-amber-500 relative overflow-hidden">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400">الزوار لايف الآن</span>
+                <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  مباشر
+                </span>
+              </div>
+              <span className="text-2xl font-black text-amber-400">
+                {data.stats.liveGuestsCount} متصل
+              </span>
+            </div>
+
+            <div className="card-fintech p-4 border-t-2 border-t-rose-500">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400">الأجهزة المحظورة</span>
+                <Ban className="w-4 h-4 text-rose-400" />
+              </div>
+              <span className="text-2xl font-black text-rose-400">
+                {data.stats.blockedDevicesCount} جهاز
+              </span>
+            </div>
           </div>
-          <span className="text-2xl font-black text-white">{data.stats.totalUsers} مستخدم</span>
-        </div>
 
-        <div className="card-fintech p-4 border-t-2 border-t-emerald-500">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-400">المشتركين المؤكدين</span>
-            <CreditCard className="w-4 h-4 text-emerald-400" />
+          {/* Quick Actions */}
+          <div className="card-fintech p-5 space-y-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400" />
+              إجراءات سريعة (Quick Actions)
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <button
+                onClick={() => setActiveTab("users")}
+                className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all text-right cursor-pointer"
+              >
+                <Users className="w-4 h-4 text-emerald-400 mb-2" />
+                <span className="text-xs font-bold text-white block">إدارة المشتركين</span>
+                <span className="text-[10px] text-slate-500">تفعيل سريع وإدارة الحسابات</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("monetization")}
+                className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all text-right cursor-pointer"
+              >
+                <DollarSign className="w-4 h-4 text-sky-400 mb-2" />
+                <span className="text-xs font-bold text-white block">التحصيل والأسعار</span>
+                <span className="text-[10px] text-slate-500">انستاباي وفودافون كاش والباقات</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("platform")}
+                className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all text-right cursor-pointer"
+              >
+                <Sliders className="w-4 h-4 text-amber-400 mb-2" />
+                <span className="text-xs font-bold text-white block">المنظومة والنسخ</span>
+                <span className="text-[10px] text-slate-500">الإعلانات، الترحيل، والنسخ الاحتياطي</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("security")}
+                className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all text-right cursor-pointer"
+              >
+                <Shield className="w-4 h-4 text-rose-400 mb-2" />
+                <span className="text-xs font-bold text-white block">الأمان والأجهزة</span>
+                <span className="text-[10px] text-slate-500">حظر الأجهزة والتحكم الأمني</span>
+              </button>
+            </div>
           </div>
-          <span className="text-2xl font-black text-emerald-400">
-            {data.stats.paidSubscriptions} مدفوع
-          </span>
-        </div>
 
-        <div className="card-fintech p-4 border-t-2 border-t-amber-500 relative overflow-hidden">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-400">الزوار لايف الآن</span>
-            <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              مباشر
-            </span>
+          {/* Recent Users + Live Visitors */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Latest Registered Users */}
+            <div className="card-fintech p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Users className="w-4 h-4 text-emerald-400" />
+                  أحدث المشتركين المسجلين
+                </h3>
+                <span className="text-[10px] text-slate-500">أحدث {Math.min(5, data.users.length)} من {data.users.length}</span>
+              </div>
+
+              <div className="space-y-2">
+                {data.users.slice(0, 5).map((user) => (
+                  <div
+                    key={user.id}
+                    className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      {user.is_admin && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                      <div>
+                        <span className="font-bold text-white block">{user.name}</span>
+                        <span className="text-[10px] text-slate-500">{user.email}</span>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                        user.plan === "lifetime"
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                          : user.plan === "annual"
+                          ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                          : user.plan === "semi-annual"
+                          ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                          : user.plan === "monthly"
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                          : "bg-slate-800 text-slate-400"
+                      }`}
+                    >
+                      {user.plan === "lifetime"
+                        ? "مدى الحياة 👑"
+                        : user.plan === "annual"
+                        ? "سنوي"
+                        : user.plan === "semi-annual"
+                        ? "نصف سنوي"
+                        : user.plan === "monthly"
+                        ? "شهري"
+                        : "مجاني"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setActiveTab("users")}
+                className="w-full py-2 rounded-xl bg-emerald-600/15 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-600/25 text-xs font-bold transition-all cursor-pointer"
+              >
+                عرض جميع المشتركين وإدارة الاشتراكات
+              </button>
+            </div>
+
+            {/* Live Visitors Preview */}
+            <div className="card-fintech p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  الزوار متصلين الآن
+                </h3>
+                <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  لايف
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {data.liveVisitors.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-500 rounded-2xl bg-slate-900/40 border border-dashed border-slate-800">
+                    لا يوجد زوار متصلين حالياً
+                  </div>
+                ) : (
+                  data.liveVisitors.slice(0, 5).map((visitor) => (
+                    <div
+                      key={visitor.session_id}
+                      className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="font-bold text-white font-mono">{visitor.ip_address}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                            {visitor.page}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          {visitor.device_info}
+                        </span>
+                      </div>
+
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {new Date(visitor.last_active_at).toLocaleTimeString("ar-EG")}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <button
+                onClick={() => setActiveTab("traffic")}
+                className="w-full py-2 rounded-xl bg-blue-600/15 border border-blue-500/25 text-blue-400 hover:bg-blue-600/25 text-xs font-bold transition-all cursor-pointer"
+              >
+                مراقبة حركة الزوار بالتفصيل
+              </button>
+            </div>
           </div>
-          <span className="text-2xl font-black text-amber-400">
-            {data.stats.liveGuestsCount} متصل
-          </span>
         </div>
-
-        <div className="card-fintech p-4 border-t-2 border-t-rose-500">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-400">الأجهزة المحظورة</span>
-            <Ban className="w-4 h-4 text-rose-400" />
-          </div>
-          <span className="text-2xl font-black text-rose-400">
-            {data.stats.blockedDevicesCount} جهاز
-          </span>
-        </div>
-      </div>
-
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-[#0F1424] border border-slate-800 rounded-2xl">
-        <button
-          onClick={() => setActiveTab("users")}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === "users"
-              ? "bg-emerald-500 text-slate-950 shadow-md"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>إدارة المشتركين والعملاء ({data.users.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("monetization")}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === "monetization"
-              ? "bg-emerald-500 text-slate-950 shadow-md"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <DollarSign className="w-3.5 h-3.5" />
-          <span>تحصيل الأموال وطرق الدفع والأسعار</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("platform")}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === "platform"
-              ? "bg-emerald-500 text-slate-950 shadow-md"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Sliders className="w-3.5 h-3.5" />
-          <span>التحكم في المنظومة والإعلانات</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("security")}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === "security"
-              ? "bg-emerald-500 text-slate-950 shadow-md"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Shield className="w-3.5 h-3.5" />
-          <span>الأمان والأجهزة المحظورة ({data.blockedDevices.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("traffic")}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === "traffic"
-              ? "bg-emerald-500 text-slate-950 shadow-md"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Radio className="w-3.5 h-3.5" />
-          <span>حركة الزوار المباشرة ({data.liveVisitors.length})</span>
-        </button>
-      </div>
+      )}
 
       {/* TAB 1: USERS MANAGEMENT */}
       {activeTab === "users" && (
@@ -931,6 +1275,291 @@ export default function AdminDashboardPage() {
               </button>
             </div>
           </div>
+
+          {/* Roles & Access Control (ported from settings) */}
+          <div className="pt-4 border-t border-slate-800 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <UserCheck className="w-5 h-5 text-blue-400" />
+              الأدوار وصلاحيات الوصول للنظام (Roles & Access Control)
+            </h3>
+            <p className="text-xs text-slate-400">
+              حدد الدور النشط للنظام للتحكم في ما يمكن للواجهة عرضه أو تنفيذه
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+              <div
+                onClick={() => {
+                  setCurrentRole("admin");
+                  handleSavePlatformSetting("current_role", "admin", "تم تفعيل دور: المدير المالي الكامل");
+                }}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  currentRole === "admin"
+                    ? "bg-blue-600/15 border-blue-500 text-white shadow-lg shadow-blue-600/10"
+                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-extrabold text-white">👑 المدير المالي (Owner)</span>
+                  {currentRole === "admin" && <Check className="w-4 h-4 text-blue-400" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  كامل الصلاحيات بلا قيود: تسجيل المعاملات، تعديلها، حذفها، تغيير قواعد العمولات والرواتب، والتحكم بالحسابات.
+                </p>
+              </div>
+
+              <div
+                onClick={() => {
+                  setCurrentRole("entry");
+                  handleSavePlatformSetting("current_role", "entry", "تم تفعيل دور: مدخل بيانات فقط");
+                }}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  currentRole === "entry"
+                    ? "bg-amber-600/15 border-amber-500 text-white shadow-lg shadow-amber-600/10"
+                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-extrabold text-white">✍️ مدخل بيانات (Data Entry)</span>
+                  {currentRole === "entry" && <Check className="w-4 h-4 text-amber-400" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  صلاحية تسجيل المصروفات والدخل اليومي فقط. يتم تقييد حذف العمليات وتعديل الإعدادات الأساسية.
+                </p>
+              </div>
+
+              <div
+                onClick={() => {
+                  setCurrentRole("viewer");
+                  handleSavePlatformSetting("current_role", "viewer", "تم تفعيل دور: مستعرض الحسابات");
+                }}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  currentRole === "viewer"
+                    ? "bg-emerald-600/15 border-emerald-500 text-white shadow-lg shadow-emerald-600/10"
+                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-extrabold text-white">👁️ مراجع / مشاهد (Viewer)</span>
+                  {currentRole === "viewer" && <Check className="w-4 h-4 text-emerald-400" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  عرض الأرصدة والتقارير والشريط الزمني فقط دون إمكانية إضافة أو تعديل أي معاملات مالية.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* PIN Lock Protection (ported from settings) */}
+          <div className="pt-4 border-t border-slate-800 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Lock className="w-5 h-5 text-indigo-400" />
+              حماية الخصوصية برقم سري (PIN Lock)
+            </h3>
+            <p className="text-xs text-slate-400">
+              قفل التطبيق برقم سري مكون من 4 أرقام عند فتحه لمنع المتطفلين من رؤية أرصدتك
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+              <div className="flex items-center gap-3">
+                <input
+                  type="password"
+                  maxLength={4}
+                  placeholder="مثال: 1234"
+                  value={pinCode}
+                  onChange={(e) => setPinCode(e.target.value)}
+                  className="w-32 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-center text-lg font-bold tracking-widest text-white focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={() => {
+                    handleSavePlatformSetting("security_pin", pinCode);
+                    handleSavePlatformSetting("require_pin", "true", "تم تفعيل القفل برقم سري بنجاح!");
+                    setPinLock(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/20"
+                >
+                  حفظ وتفعيل القفل
+                </button>
+              </div>
+
+              {pinLock && (
+                <button
+                  onClick={() => {
+                    handleSavePlatformSetting("require_pin", "false", "تم تعطيل القفل");
+                    setPinLock(false);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold hover:bg-rose-500/20"
+                >
+                  تعطيل القفل
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Backup & Data Management (ported from settings) */}
+          <div className="pt-4 border-t border-slate-800 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Database className="w-5 h-5 text-blue-400" />
+              النسخ الاحتياطي وإدارة البيانات
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Download className="w-4 h-4 text-emerald-400" />
+                  تصدير نسخة احتياطية كاملة (JSON)
+                </h4>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  حمّل ملف يحتوي على كل الحسابات، العمليات المالية، التصنيفات، والإعدادات الخاصة بك للاحتفاظ بها.
+                </p>
+                <button
+                  onClick={handleExportBackup}
+                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all"
+                >
+                  تنزيل النسخة الاحتياطية الآن
+                </button>
+              </div>
+
+              <div className="p-5 rounded-2xl bg-rose-950/20 border border-rose-500/30 space-y-3">
+                <h4 className="text-sm font-bold text-rose-400 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  تصفير بيانات العمليات (Reset)
+                </h4>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  حذف كل المعاملات المالية المسجلة للبدء بسجل نظيف، مع الحفاظ على الحسابات والإعدادات.
+                </p>
+                <button
+                  onClick={handleResetData}
+                  className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition-all"
+                >
+                  تصفير العمليات بالكامل
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Supabase Cloud (ported from settings) */}
+          <div className="pt-4 border-t border-slate-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-emerald-400" />
+                  ربط وتكامل قاعدة بيانات Supabase السحابية (PostgreSQL)
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  توصيل النظام بقاعدة بيانات سحابية دائمة لضمان بقاء البيانات بعد نشر المشروع على Vercel
+                </p>
+              </div>
+
+              <button
+                onClick={checkSupabase}
+                disabled={checkingSupabase}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 transition"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${checkingSupabase ? "animate-spin" : ""}`} />
+                فحص الاتصال بـ Supabase
+              </button>
+            </div>
+
+            {supabaseStatus && (
+              <div
+                className={`p-4 rounded-2xl border text-xs space-y-2 ${
+                  supabaseStatus.connected
+                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                    : supabaseStatus.configured
+                    ? "bg-amber-950/20 border-amber-500/40 text-amber-300"
+                    : "bg-slate-900 border-slate-800 text-slate-300"
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold">
+                  {supabaseStatus.connected ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  )}
+                  <span>
+                    {supabaseStatus.connected
+                      ? "الاتصال نشط وقاعدة البيانات جاهزة للعمل على Vercel و Supabase"
+                      : supabaseStatus.configured
+                      ? "تم العثور على المفاتيح، ولكن الجداول غير مكتملة"
+                      : "المتغيرات غير مضبوطة في البيئة (.env)"}
+                  </span>
+                </div>
+                <p className="text-[11px] opacity-90">{supabaseStatus.message || supabaseStatus.error}</p>
+                {supabaseStatus.hint && (
+                  <p className="text-[11px] font-semibold text-amber-400">💡 {supabaseStatus.hint}</p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-4 text-xs">
+              <h4 className="font-bold text-slate-200">خطوات تشغيل وربط Supabase مع Vercel في 3 خطوات:</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-black text-xs flex items-center justify-center border border-blue-500/30">
+                    1
+                  </span>
+                  <h5 className="font-bold text-white">إنشاء مشروع Supabase</h5>
+                  <p className="text-[11px] text-slate-400">
+                    افتح موقع supabase.com وأنشئ مشروع جديد مجاني، ثم انسخ رابط المشروع والمفتاح العام (anon key).
+                  </p>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <span className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 font-black text-xs flex items-center justify-center border border-indigo-500/30">
+                    2
+                  </span>
+                  <h5 className="font-bold text-white">تشغيل ملف SQL</h5>
+                  <p className="text-[11px] text-slate-400">
+                    في Supabase افتح SQL Editor والصق محتوى ملف <code>supabase_schema.sql</code> الموجود بمشروعك واضغط Run.
+                  </p>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-black text-xs flex items-center justify-center border border-emerald-500/30">
+                    3
+                  </span>
+                  <h5 className="font-bold text-white">إضافة المتغيرات في Vercel</h5>
+                  <p className="text-[11px] text-slate-400">
+                    في إعدادات مشروعك على Vercel (Environment Variables) أضف المتغيرين:
+                    <br />
+                    <code className="text-blue-400">NEXT_PUBLIC_SUPABASE_URL</code>
+                    <br />
+                    <code className="text-blue-400">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/20 via-slate-900 to-slate-900 border border-emerald-500/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                    <Cloud className="w-4 h-4" />
+                    ترحيل ونقل جميع البيانات المحلية إلى Supabase
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1">
+                    يقوم بنسخ ونقل جميع الحسابات والمعاملات والأهداف والجمعيات المسجلة حالياً إلى قاعدة Supabase بضغطة واحدة
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleMigrateToSupabase}
+                  disabled={migratingSupabase}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition flex items-center gap-2 self-start sm:self-auto"
+                >
+                  {migratingSupabase ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      جاري نقل البيانات...
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-3.5 h-3.5" />
+                      ترحيل البيانات الآن 🚀
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1202,6 +1831,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
