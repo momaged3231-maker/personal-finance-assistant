@@ -24,12 +24,14 @@ export function proxy(request: NextRequest) {
 
   // 3. Define public routes
   const isPublicRoute =
+    pathname === "/" ||
     pathname === "/landing" ||
     pathname === "/login" ||
     pathname === "/signup" ||
     pathname.startsWith("/api/auth");
 
-  // 4. Redirect unauthenticated users away from protected routes
+  // 4. Redirect unauthenticated users away from protected routes.
+  //    Root (/) is public: its page renders the landing for guests.
   if (!isAuthenticated && !isPublicRoute) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json(
@@ -37,12 +39,12 @@ export function proxy(request: NextRequest) {
         { status: 401 }
       );
     }
-    const landingUrl = new URL("/landing", request.url);
+    const landingUrl = new URL("/", request.url);
     return NextResponse.redirect(landingUrl);
   }
 
-  // 5. If authenticated user visits login or signup, redirect to dashboard
-  if (isAuthenticated && (pathname === "/login" || pathname === "/signup")) {
+  // 5. If authenticated user visits login, signup, or landing, send them to dashboard
+  if (isAuthenticated && (pathname === "/login" || pathname === "/signup" || pathname === "/landing")) {
     const dashboardUrl = new URL("/", request.url);
     return NextResponse.redirect(dashboardUrl);
   }

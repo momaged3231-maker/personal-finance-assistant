@@ -56,10 +56,10 @@ export default function Navbar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "logout" }),
       });
-      window.location.href = "/landing";
+      window.location.href = "/";
     } catch (e) {
       console.error("Logout failed", e);
-      window.location.href = "/landing";
+      window.location.href = "/";
     }
   }
 
@@ -101,6 +101,9 @@ export default function Navbar() {
 
   const badgeInfo = planBadge(session?.user?.plan);
 
+  // Guest marketing mode: light theme, clean CTAs (works at / and /landing)
+  const isGuestLanding = !session?.authenticated && (pathname === "/landing" || pathname === "/");
+
   return (
     <>
       {/* 1. IMPERSONATION BANNER (SaaS Super Admin Live View) */}
@@ -124,33 +127,45 @@ export default function Navbar() {
       )}
 
       {/* 2. MAIN HEADER */}
-      <header className="flex items-center justify-between py-3 border-b border-slate-800/80 mb-3">
+      <header
+        className={`relative z-30 flex items-center justify-between py-3 border-b mb-3 ${
+          isGuestLanding ? "border-slate-200/90" : "border-slate-800/80"
+        }`}
+      >
         <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform duration-200">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center text-emerald-600 group-hover:scale-105 transition-transform duration-200">
             <Sparkles className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-sm font-black text-slate-100">
-              مساعدك المالي
+            <span
+              className={`text-sm font-black ${
+                isGuestLanding ? "text-slate-900" : "text-slate-100"
+              }`}
+            >
+              صحبي
             </span>
-            <span className="block text-[9px] text-emerald-400 font-bold -mt-0.5 tracking-wider">
-              FINANCE AI
+            <span
+              className={`block text-[9px] font-bold -mt-0.5 tracking-wider ${
+                isGuestLanding ? "text-emerald-600" : "text-emerald-400"
+              }`}
+            >
+              مساعدك المالي الشخصي
             </span>
           </div>
         </Link>
 
-        {/* If on /landing and not logged in, show dedicated clean landing links */}
-        {pathname === "/landing" && !session?.authenticated ? (
+        {/* Guest on marketing page: dedicated clean light landing links */}
+        {isGuestLanding ? (
           <div className="flex items-center gap-2.5">
             <Link
               href="/login"
-              className="px-4 py-2 rounded-full border border-slate-800 hover:border-slate-700 bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition-all"
+              className="px-4 py-2 rounded-full border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-sm"
             >
               تسجيل الدخول
             </Link>
             <Link
               href="/signup"
-              className="btn-pill-primary text-xs py-2 px-4 font-bold"
+              className="lp-btn lp-btn-primary text-xs !py-2.5 !px-5"
             >
               ابدأ مجاناً
             </Link>
@@ -281,8 +296,8 @@ export default function Navbar() {
         )}
       </header>
 
-      {/* Mobile Floating Bottom Bar (Hidden on landing for unauthenticated users) */}
-      {!(pathname === "/landing" && !session?.authenticated) && (
+      {/* Mobile Floating Bottom Bar (Hidden on marketing page for guests) */}
+      {!isGuestLanding && (
         <div className="md:hidden fixed bottom-3 left-3 right-3 z-50">
           <nav className="card-fintech bg-slate-950/95 border border-slate-800/80 rounded-2xl p-1.5 flex items-center justify-around shadow-2xl shadow-black/80 backdrop-blur-xl">
           {links.slice(0, 5).map((item) => {

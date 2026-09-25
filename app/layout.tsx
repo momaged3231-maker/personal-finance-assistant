@@ -3,8 +3,8 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 
 export const metadata: Metadata = {
-  title: "المساعد المالي اليومي | المنظومة المالية الذكية",
-  description: "تطبيق إدارة المصروفات والدخل الشخصي الذكي بالعامية المصرية والذكاء الاصطناعي",
+  title: "صحبي | مساعدك المالي الشخصي",
+  description: "قل لصحبي اللي حصل في يومك — يرتب دخلك ومصاريفك والتزاماتك بالعامية المصرية والذكاء الاصطناعي",
 };
 
 export default function RootLayout({

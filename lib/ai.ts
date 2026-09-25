@@ -7,10 +7,13 @@ import {
   getRecentTransactions,
   getExpenseCategoriesBreakdown,
   getSettings,
+  getDebts,
+  getTodayDateString,
   formatEgp,
   egpToPiastres,
   piastresToEgp,
 } from "./finance";
+import { getActiveRecurringBills } from "./bills";
 
 export interface AiProviderConfig {
   provider: "openai" | "openrouter";
@@ -169,6 +172,66 @@ export interface AssistantResponse {
   text: string;
   action?: ParsedAction;
   data?: Record<string, unknown>;
+}
+
+// ------------------------------------------------------------------
+// Financial Intelligence: "المتاح بعد الالتزامات" + "أثر أي قرار"
+// ------------------------------------------------------------------
+export interface ObligationsOverview {
+  totalBalance: number; // piastres
+  totalObligations: number; // piastres
+  available: number; // piastres
+  billsUpcoming: Array<{ name: string; amount: number; due: string }>;
+  debtsPending: Array<{ title: string; amount: number; due?: string | null }>;
+}
+
+function firstOfMonth(dateStr: string): string {
+  return dateStr.substring(0, 7) + "-01";
+}
+
+function firstOfNextMonth(dateStr: string): string {
+  const [y, m] = dateStr.split("-").slice(0, 2).map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
+// Sum of known financial commitments (recurring bills due this month + unpaid debts you owe)
+export async function getObligationsOverview(userId = 1): Promise<ObligationsOverview> {
+  const accounts = await getAccounts(userId);
+  const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
+
+  const today = getTodayDateString();
+  const monthStart = firstOfMonth(today);
+  const nextMonthStart = firstOfNextMonth(today);
+
+  const bills = await getActiveRecurringBills(userId);
+  const billsUpcoming = bills
+    .filter((b) => b.next_due_date >= monthStart && b.next_due_date < nextMonthStart)
+    .map((b) => ({ name: b.name, amount: b.amount, due: b.next_due_date }));
+
+  const debts = await getDebts(userId);
+  const debtsPending = (debts as Array<Record<string, unknown>>)
+    .filter((d) => d.type === "i_owe" && d.status === "pending")
+    .map((d) => {
+      const amount = Number(d.amount) || 0;
+      const paid = Number(d.paid_amount) || 0;
+      return {
+        title: String(d.title || "دين مستحق"),
+        amount: Math.max(amount - paid, 0),
+        due: (d.due_date as string | null) || null,
+      };
+    });
+
+  const billsTotal = billsUpcoming.reduce((s, b) => s + b.amount, 0);
+  const debtsTotal = debtsPending.reduce((s, d) => s + d.amount, 0);
+  const totalObligations = billsTotal + debtsTotal;
+
+  return {
+    totalBalance,
+    totalObligations,
+    available: totalBalance - totalObligations,
+    billsUpcoming,
+    debtsPending,
+  };
 }
 
 // Local Egyptian Arabic Parser & Financial Query Engine
@@ -426,7 +489,70 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
     };
   }
 
-  // Financial goals and planning questions
+  // ------------------------------------------------------------------
+  // 5. & 6. "المتاح بعد الالتزامات" + "قبل ما تدفع… اعرض أثر القرار"
+  // ------------------------------------------------------------------
+  const isAvailableQuery =
+    /متاح|اتفضل|فاضل\s+بعد|بعد الالتزامات|من\s+الالتزامات|اقدر اصرف كام|مش محجوز|محتجز/.test(query);
+
+  const isImpactQueryAttempt =
+    /لو\s*(صرفت|دفعت|اشتريت|شريت|خدت|دافعت|صرف|خصمت)\w*\s*\d|هيصلي ايه لو|هقدر اصرف لو|هقدر ادفع|اقدر ادفع|اقدر اشتري/.test(query);
+
+  if (isImpactQueryAttempt && !isAvailableQuery) {
+    const amountNum = parseArabicNumber(query);
+    if (amountNum && amountNum > 0) {
+      const ov = await getObligationsOverview(userId);
+      const amountPiastres = egpToPiastres(amountNum);
+      const availableAfterPurchase = ov.available - amountPiastres;
+
+      let text =
+        `أثر القرار حسب البيانات المسجلة:\n\n` +
+        `• رصيدك الحالي: ${formatEgp(ov.totalBalance)}\n` +
+        `• الالتزامات القادمة: ${formatEgp(ov.totalObligations)}\n` +
+        `• المتاح بعدها: ${formatEgp(Math.max(ov.available, 0))}\n` +
+        `• وبعد مصروف ${formatEgp(amountPiastres)}: ${formatEgp(Math.max(availableAfterPurchase, 0))}\n\n`;
+
+      if (availableAfterPurchase >= 0) {
+        text += `الموضوع ممكن وفقًا للبيانات المسجلة، لكن هيقلل هامش الأمان عندك.`;
+      } else {
+        text += `الرقم ده بيعدّي اللي متاح ليك — نسجل مصاريفك الأول ونراجع الصورة مع بعض.`;
+      }
+      text += `\n(لو عندك مصاريف غير مسجلة، الرقم ممكن يختلف.)`;
+
+      return { text };
+    }
+
+    // Impact question without a clear amount → ask for it
+    const ov = await getObligationsOverview(userId);
+    return {
+      text: `يا فندم عايز أجاوبك بدقة، قولي المبلغ:\n💵 المتاح الحالي بعد الالتزامات: ${formatEgp(Math.max(ov.available, 0))}\n\nجرب مثلًا: «لو صرفت 1500 النهارده هيحصلي إيه؟»`,
+    };
+  }
+
+  if (isAvailableQuery) {
+    const ov = await getObligationsOverview(userId);
+    const detailLines: string[] = [];
+    if (ov.billsUpcoming.length > 0) {
+      detailLines.push(ov.billsUpcoming.map((b) => `${b.name}: ${formatEgp(b.amount)}`).join("، "));
+    }
+    if (ov.debtsPending.length > 0) {
+      detailLines.push(ov.debtsPending.map((d) => `${d.title}: ${formatEgp(d.amount)}`).join("، "));
+    }
+
+    let text = `المتاح لك بعد الالتزامات المسجلة:\n💵 ${formatEgp(Math.max(ov.available, 0))}`;
+    if (ov.totalObligations > 0) {
+      text += `\n\nالتزامات الشهر ده (${formatEgp(ov.totalObligations)}):\n• ${detailLines.join("\n• ")}`;
+    } else {
+      text += `\n\nمفيش التزامات مسجلة عندك الشهر ده — كله ليك. 🎉`;
+    }
+    text += `\n\n(لو صرفت حاجة زيادة مكتتبهاش، الرقم هيختلف.)`;
+
+    return { text };
+  }
+
+  // ------------------------------------------------------------------
+  // 7. Financial goals and planning questions
+  // ------------------------------------------------------------------
   if (/خطط|هدف|عايز\s+أدخر|ادخار|ادخر|حلم|استثمر|مستقبل/i.test(query)) {
     const accounts = await getAccounts(userId);
     const total = accounts.reduce((acc, a) => acc + a.balance, 0);
@@ -438,7 +564,7 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
   // Default Egyptian friendly assistant reply
   const accountsShort = accounts.slice(0, 3).map((a) => `${a.name}: ${formatEgp(a.balance)}`).join(" | ");
   return {
-    text: `فهمتك يا فندم، ومش فاتني أي حاجة من حسابك الحالي:\n📌 ${accountsShort}\n\nتقدر تسألني بأي طريقة على سبيل المثال:\n• «صرفت كام النهارده؟»\n• «معايا كام في البنك؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n• «أكتر حاجة بصرف عليها إيه؟»\n• «إزاي أقلل المصاريف؟»\n\nولو قصدك حاجة معينة تاني، قوليها بكلماتك وأنا أرد عليك فوراً.`,
+    text: `فهمتك يا فندم، ومش فاتني أي حاجة من حسابك الحالي:\n📌 ${accountsShort}\n\nتقدر تسألني بأي طريقة على سبيل المثال:\n• «صرفت كام النهارده؟»\n• «معايا كام في البنك؟»\n• «المتاح بعد الالتزامات كام؟»\n• «لو صرفت 1500 هيحصلي إيه؟»\n• «سجل 75 جنيه سجائر»\n• «دخلت 600 عمولة»\n\nولو قصدك حاجة معينة تاني، قوليها بكلماتك وأنا أرد عليك فوراً.`,
   };
 }
 
@@ -462,10 +588,11 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
       const month = await getMonthlySummary(undefined, userId);
       const topExpenses = await getExpenseCategoriesBreakdown(undefined, userId);
       const recent = await getRecentTransactions(5, userId);
+      const obligations = await getObligationsOverview(userId);
       // Load previous conversation turns for memory
       const history = await getConversationHistory(userId, 20);
 
-      const systemPrompt = `أنت المساعد المالي الشخصي الذكي لواحد مصري ("مساعدك المالي اليومي").
+      const systemPrompt = `أنت "صحبي" — المساعد المالي الشخصي الذكي لواحد مصري ("صحبي" بدل ما ينادى "مساعدك المالي اليومي").
 اللغة: مصري ودي وسريع وفاهم طبيعة المصاريف في مصر (القهوة، السجائر، البنزين، السوبرماركت، فودافون كاش، العمولات، المرتب).
 البيانات المالية الحالية للمستخدم مباشرة من قاعدة البيانات (PostgreSQL):
 - تاريخ اليوم: ${today.date}
@@ -480,6 +607,8 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 - مصروف الشهر: ${piastresToEgp(month.expense)} جنيه
 - أعلى تصنيفات المصاريف: ${JSON.stringify(topExpenses.slice(0, 3))}
 - آخر العمليات: ${JSON.stringify(recent.map(r => ({ type: r.type, amount: piastresToEgp(r.amount), desc: r.description, date: r.date })))}
+- إجمالي الالتزامات المسجلة الشهر ده (فواتير دورية + ديون مستحقة): ${piastresToEgp(obligations.totalObligations)} جنيه (${obligations.billsUpcoming.map(b => b.name + ": " + piastresToEgp(b.amount)).join("، ")}${obligations.debtsPending.length > 0 ? " و" + obligations.debtsPending.map(d => d.title + ": " + piastresToEgp(d.amount)).join("، ") : ""})
+- المتاح بعد الالتزامات: ${piastresToEgp(Math.max(obligations.available, 0))} جنيه
 
 القواعد الإلزامية:
 1. لو المستخدم طلب تسجيل مصروف أو دخل أو تحويل:
@@ -493,7 +622,9 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
    ACTION_JSON:{"type":"expense|income|transfer","amount":المبلغ_بالجنيه,"description":"...","category":"...","accountName":"الكاش|البنك|فودافون كاش"}
 2. لو كان سؤال عادي عن الفلوس أو الصرف أو الإحصائيات: جاوب فوراً بالأرقام الحقيقية بدقة وبلهجة مصرية مهذبة ومشجعة.
 3. افتكر سياق المحادثة السابقة (الأسئلة السابقة وردودك) وفيه ردودك والإجراءات اللي حصلت، وخلي ردودك متسقة مع المحادثة. لو سألك شيء زي "وأيه تاني / إزاي؟" اعرف إنه بيكمل على آخر سؤال.
-4. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.`;
+4. لو سأل عن مبلغ أو شيء أنت مش متأكد منه اطلب منه التوضيح ببساطة بدل ما تخبط.
+5. لو سأل «المتاح كام؟» أو «اقدر أصرف كام؟»: اعتمد رقم «المتاح بعد الالتزامات» واذكر الالتزامات المسجلة (أسماء المبالغ) اللي داخلة في الخصم.
+6. لو سأل «لو صرفت [مبلغ]؟» أو «هقدر أدفع كام؟»: اعرض أثر القرار للأرقام بس (الرصيد الحالي، الالتزامات القادمة، المتاح بعدها، وبعد المصروف المذكور) من غير ما تحكم «اشتري/ماتشتريش»، واضيف دايماً إن النتيجة مبنية على البيانات المسجلة ولو فيه مصاريف غير مسجلة الرقم يختلف.`;
 
       const chatParams: Record<string, unknown> = {
         model: config.model,
