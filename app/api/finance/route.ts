@@ -29,6 +29,10 @@ import {
   createDebt,
   updateDebtPayment,
   updateDebt,
+  createGamEya,
+  updateGamEya,
+  getAllGamEyaMeta,
+  computeGamEyaInstallments,
   deleteDebt,
   getSavingsGoals,
   createSavingsGoal,
@@ -73,7 +77,19 @@ export async function GET(req: NextRequest) {
 
     if (view === "debts") {
       const debts = await getDebts(userId);
-      return NextResponse.json({ debts });
+      const gamEyaMeta = await getAllGamEyaMeta(userId);
+      const gamEyaSchedules: Record<number, unknown> = {};
+      for (const [debtId, meta] of Object.entries(gamEyaMeta)) {
+        const nId = Number(debtId);
+        const debt = (debts as Array<Record<string, unknown>>).find(
+          (d) => Number(d.id) === nId
+        ) as { paid_amount?: number } | undefined;
+        gamEyaSchedules[nId] = computeGamEyaInstallments(
+          { paid_amount: Number(debt?.paid_amount || 0) },
+          meta
+        );
+      }
+      return NextResponse.json({ debts, gamEyaMeta, gamEyaSchedules });
     }
 
     if (view === "goals") {
@@ -311,6 +327,41 @@ export async function POST(req: NextRequest) {
     if (action === "delete_debt") {
       const { id } = body;
       await deleteDebt(Number(id), userId);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "create_gam_eya") {
+      const { title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid } = body;
+      const id = await createGamEya({
+        title,
+        personName,
+        monthlyInstallment: egpToPiastres(monthlyInstallment),
+        totalMonths: Number(totalMonths),
+        receiptMonth: receiptMonth ? Number(receiptMonth) : undefined,
+        installmentDay: installmentDay ? Number(installmentDay) : undefined,
+        dueDate,
+        installmentsPaid: installmentsPaid ? Number(installmentsPaid) : undefined,
+        userId,
+      });
+      return NextResponse.json({ success: true, id });
+    }
+
+    if (action === "update_gam_eya") {
+      const { id, title, personName, monthlyInstallment, totalMonths, receiptMonth, installmentDay, dueDate, installmentsPaid } = body;
+      await updateGamEya(
+        Number(id),
+        {
+          title,
+          personName: personName === undefined ? undefined : (personName || null),
+          monthlyInstallment: monthlyInstallment !== undefined && monthlyInstallment !== null ? egpToPiastres(monthlyInstallment) : undefined,
+          totalMonths: totalMonths !== undefined && totalMonths !== null ? Number(totalMonths) : undefined,
+          receiptMonth: receiptMonth !== undefined && receiptMonth !== null ? Number(receiptMonth) : undefined,
+          installmentDay: installmentDay !== undefined && installmentDay !== null ? Number(installmentDay) : undefined,
+          dueDate: dueDate === undefined ? undefined : (dueDate || null),
+          installmentsPaid: installmentsPaid !== undefined && installmentsPaid !== null ? Number(installmentsPaid) : undefined,
+        },
+        userId
+      );
       return NextResponse.json({ success: true });
     }
 

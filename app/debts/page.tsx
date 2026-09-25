@@ -18,10 +18,12 @@ import {
   Bell,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
-import { formatEgp, egpToPiastres, DebtItem } from "@/lib/types";
+import { formatEgp, egpToPiastres, DebtItem, GamEyaMeta, GamEyaInstallment } from "@/lib/types";
 
 export default function DebtsPage() {
   const [debts, setDebts] = useState<DebtItem[]>([]);
+  const [gamMeta, setGamMeta] = useState<Record<number, GamEyaMeta>>({});
+  const [gamSchedules, setGamSchedules] = useState<Record<number, GamEyaInstallment[]>>({});
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<"all" | "gam_eya" | "i_owe" | "owed_to_me">("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,6 +39,11 @@ export default function DebtsPage() {
   const [editPerson, setEditPerson] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
+  const [editInstallment, setEditInstallment] = useState("");
+  const [editMonths, setEditMonths] = useState("");
+  const [editReceiptMonth, setEditReceiptMonth] = useState("");
+  const [editDayNum, setEditDayNum] = useState("");
+  const [editPaidInstallments, setEditPaidInstallments] = useState("");
 
   // New debt form state
   const [formType, setFormType] = useState<"gam_eya" | "i_owe" | "owed_to_me">("gam_eya");
@@ -44,6 +51,12 @@ export default function DebtsPage() {
   const [formPerson, setFormPerson] = useState("");
   const [formAmount, setFormAmount] = useState("");
   const [formDueDate, setFormDueDate] = useState("");
+  const [formInstallment, setFormInstallment] = useState("");
+  const [formMonths, setFormMonths] = useState("");
+  const [formReceiptMonth, setFormReceiptMonth] = useState("");
+  const [formDayNum, setFormDayNum] = useState("");
+  const [formReceiptDate, setFormReceiptDate] = useState("");
+  const [formPaidInstallments, setFormPaidInstallments] = useState("");
 
   const fetchDebts = async () => {
     try {
@@ -52,6 +65,20 @@ export default function DebtsPage() {
       const data = await res.json();
       if (data.debts) {
         setDebts(data.debts);
+      }
+      if (data.gamEyaMeta) {
+        const map: Record<number, GamEyaMeta> = {};
+        for (const [id, meta] of Object.entries(data.gamEyaMeta as Record<string, GamEyaMeta>)) {
+          map[Number(id)] = meta;
+        }
+        setGamMeta(map);
+      }
+      if (data.gamEyaSchedules) {
+        const map: Record<number, GamEyaInstallment[]> = {};
+        for (const [id, sched] of Object.entries(data.gamEyaSchedules as Record<string, GamEyaInstallment[]>)) {
+          map[Number(id)] = sched;
+        }
+        setGamSchedules(map);
       }
     } catch (e) {
       console.error(e);
@@ -64,10 +91,51 @@ export default function DebtsPage() {
     fetchDebts();
   }, []);
 
+  const isStructuredGamEya = (type: string) =>
+    type === "gam_eya" && parseFloat(formInstallment) > 0 && parseFloat(formMonths) > 0;
+
   const handleCreateDebt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formTitle || !formAmount) return;
+    if (!formTitle) return;
+    if (isStructuredGamEya(formType)) {
+      if (!formInstallment || !formMonths) return;
+      const pot = parseFloat(formInstallment) * parseFloat(formMonths);
+      try {
+        const res = await fetch("/api/finance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "create_gam_eya",
+            title: formTitle,
+            personName: formPerson,
+            monthlyInstallment: parseFloat(formInstallment),
+            totalMonths: parseFloat(formMonths),
+            receiptMonth: formReceiptMonth ? parseFloat(formReceiptMonth) : undefined,
+            installmentDay: formDayNum ? parseFloat(formDayNum) : undefined,
+            dueDate: formReceiptDate || undefined,
+            installmentsPaid: formPaidInstallments ? parseFloat(formPaidInstallments) : undefined,
+          }),
+        });
+        if (res.ok) {
+          setIsModalOpen(false);
+          setFormTitle("");
+          setFormPerson("");
+          setFormInstallment("");
+          setFormMonths("");
+          setFormReceiptMonth("");
+          setFormDayNum("");
+          setFormReceiptDate("");
+          setFormPaidInstallments("");
+          fetchDebts();
+        }
+        return;
+      } catch (err) {
+        console.error(err);
+        return;
+      }
+    }
 
+    if (!formAmount) return;
     try {
       const res = await fetch("/api/finance", {
         method: "POST",
@@ -143,13 +211,59 @@ export default function DebtsPage() {
     setEditPerson(item.person_name || "");
     setEditAmount((item.amount / 100).toFixed(2));
     setEditDueDate(item.due_date || "");
+    const meta = gamMeta[item.id];
+    if (meta) {
+      setEditInstallment((meta.monthlyInstallment / 100).toFixed(2));
+      setEditMonths(String(meta.totalMonths));
+      setEditReceiptMonth(meta.receiptMonth ? String(meta.receiptMonth) : "");
+      setEditDayNum(meta.installmentDay ? String(meta.installmentDay) : "");
+      setEditPaidInstallments("");
+    } else {
+      setEditInstallment("");
+      setEditMonths("");
+      setEditReceiptMonth("");
+      setEditDayNum("");
+      setEditPaidInstallments("");
+    }
     setIsEditModalOpen(true);
   };
 
   const handleUpdateDebt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editDebt || !editTitle || !editAmount) return;
+    if (!editDebt || !editTitle) return;
 
+    if (editType === "gam_eya" && gamMeta[editDebt.id]) {
+      const pot = parseFloat(editInstallment) * parseFloat(editMonths);
+      try {
+        const res = await fetch("/api/finance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update_gam_eya",
+            id: editDebt.id,
+            title: editTitle,
+            personName: editPerson,
+            monthlyInstallment: parseFloat(editInstallment),
+            totalMonths: parseFloat(editMonths),
+            receiptMonth: editReceiptMonth ? parseFloat(editReceiptMonth) : undefined,
+            installmentDay: editDayNum ? parseFloat(editDayNum) : undefined,
+            dueDate: editDueDate || null,
+            installmentsPaid: editPaidInstallments ? parseFloat(editPaidInstallments) : undefined,
+          }),
+        });
+        if (res.ok) {
+          setIsEditModalOpen(false);
+          setEditDebt(null);
+          fetchDebts();
+        }
+        return;
+      } catch (err) {
+        console.error(err);
+        return;
+      }
+    }
+
+    if (!editAmount) return;
     try {
       const res = await fetch("/api/finance", {
         method: "POST",
@@ -192,7 +306,8 @@ export default function DebtsPage() {
     return d.type === filterType;
   });
 
-  // Payment notifications (overdue + due within 14 days)
+  // Payment notifications (overdue + due within 14 days), including
+  // gam'eya next-installment dates derived from the schedule
   const daysDiff = (due: string) => {
     const dueDate = new Date(due.length <= 10 ? due + "T00:00:00" : due);
     const now = new Date();
@@ -200,11 +315,50 @@ export default function DebtsPage() {
     return Math.round((dueDate.getTime() - now.getTime()) / 86400000);
   };
 
-  const notificationItems = debts
-    .filter((d) => d.due_date && d.status !== "paid" && d.paid_amount < d.amount)
-    .map((d) => ({ d, days: daysDiff(String(d.due_date)) }))
-    .filter((x) => x.days <= 14)
-    .sort((a, b) => a.days - b.days);
+  const notificationItems: Array<
+    { d: DebtItem; days: number; label: string; remaining: number; dates: string[] }
+  > = [];
+  for (const d of debts) {
+    if (d.status === "paid" && d.paid_amount >= d.amount) continue;
+    const dates: string[] = [];
+    let label = d.title;
+
+    if (d.type === "gam_eya" && gamSchedules[d.id]?.length) {
+      const meta = gamMeta[d.id];
+      const next = gamSchedules[d.id].find((inst) => !inst.paid && inst.dueDate && daysDiff(inst.dueDate) <= 14);
+      const receiptDue = d.due_date && daysDiff(String(d.due_date)) <= 14 ? String(d.due_date) : undefined;
+      if (next) {
+        dates.push(next.dueDate!);
+        label = `${d.title} — ${next.label}`;
+      }
+      if (receiptDue) dates.push(receiptDue);
+      if (dates.length === 0) continue;
+      const first = dates.sort((a, b) => daysDiff(a) - daysDiff(b))[0];
+      if (daysDiff(String(first)) > 14) continue;
+      notificationItems.push({
+        d,
+        days: daysDiff(String(first)),
+        label,
+        remaining: next ? next.amount : Math.max(d.amount - d.paid_amount, 0),
+        dates: [...new Set(dates.sort((a, b) => daysDiff(a) - daysDiff(b)))],
+      });
+      continue;
+    }
+
+    if (!d.due_date || d.paid_amount >= d.amount) continue;
+    const day = daysDiff(String(d.due_date));
+    if (day > 14) continue;
+    if (daysDiff(String(d.due_date)) !== undefined) {
+      notificationItems.push({
+        d,
+        days: day,
+        label: d.title,
+        remaining: Math.max(d.amount - d.paid_amount, 0),
+        dates: [String(d.due_date)],
+      });
+    }
+  }
+  notificationItems.sort((a, b) => a.days - b.days);
 
   const notificationTypeLabel = (type: string) => {
     if (type === "gam_eya") return "جمعية";
@@ -254,20 +408,20 @@ export default function DebtsPage() {
               تنبيهات السداد والقبض
             </div>
             <div className="space-y-2">
-              {notificationItems.map(({ d, days }) => (
+              {notificationItems.map(({ d, days, label, remaining }) => (
                 <div
-                  key={d.id}
+                  key={`${d.id}-${label}`}
                   className="flex items-center justify-between gap-3 rounded-2xl bg-slate-900/70 border border-slate-800 px-4 py-2.5"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${notificationTypeColor(d.type)}`}>
                       {notificationTypeLabel(d.type)}
                     </span>
-                    <span className="text-xs font-semibold text-slate-200 truncate">{d.title}</span>
+                    <span className="text-xs font-semibold text-slate-200 truncate">{label}</span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs text-slate-400 whitespace-nowrap">
-                      المتبقي <span className="text-amber-400 font-black">{formatEgp(d.amount - d.paid_amount)}</span>
+                      المتبقي <span className="text-amber-400 font-black">{formatEgp(remaining)}</span>
                     </span>
                     <span
                       className={`text-[11px] font-bold whitespace-nowrap ${
@@ -360,6 +514,10 @@ export default function DebtsPage() {
             {filteredDebts.map((item) => {
               const progress = Math.min(100, Math.round((item.paid_amount / item.amount) * 100));
               const isPaid = item.status === "paid" || item.paid_amount >= item.amount;
+              const nextInst =
+                item.type === "gam_eya" && gamSchedules[item.id]
+                  ? gamSchedules[item.id].find((inst) => !inst.paid)
+                  : undefined;
 
               return (
                 <div
@@ -404,6 +562,32 @@ export default function DebtsPage() {
                           <span>الطرف الآخر:</span>
                           <span className="text-slate-200 font-medium">{item.person_name}</span>
                         </p>
+                      )}
+                      {item.type === "gam_eya" && gamMeta[item.id] && (
+                        <div className="mt-2 space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">
+                              قسط {formatEgp(gamMeta[item.id].monthlyInstallment)} شهرياً
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                              {gamMeta[item.id].totalMonths} شهور
+                            </span>
+                            {gamMeta[item.id].receiptMonth > 0 && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                                ⭐ هتقبض في الشهر {gamMeta[item.id].receiptMonth}
+                              </span>
+                            )}
+                          </div>
+                          {gamSchedules[item.id]?.length > 0 && (
+                            <p className="text-[11px] text-slate-400">
+                              الأقساط المدفوعة:{" "}
+                              <span className="text-slate-200 font-bold">
+                                {gamSchedules[item.id].filter((inst) => inst.paid).length}
+                              </span>{" "}
+                              من {gamSchedules[item.id].length}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -464,8 +648,19 @@ export default function DebtsPage() {
                   <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
                     <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
                       <Calendar className="w-3.5 h-3.5" />
-                      <span>{item.due_date ? `الاستحقاق: ${item.due_date}` : "بدون موعد محدد"}</span>
+                      <span>
+                        {item.due_date
+                          ? item.type === "gam_eya"
+                            ? `القبض: ${item.due_date}`
+                            : `الاستحقاق: ${item.due_date}`
+                          : "بدون موعد محدد"}
+                      </span>
                     </div>
+                    {!isPaid && nextInst && (
+                      <div className="text-[10px] text-indigo-300 font-semibold mt-1">
+                        {nextInst.label} بتاريخ {nextInst.dueDate} — متبقي {formatEgp(nextInst.amount)}
+                      </div>
+                    )}
 
                     {!isPaid && (
                       <button
@@ -538,29 +733,110 @@ export default function DebtsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">إجمالي المبلغ (ج.م):</label>
-                    <input
-                      type="number"
-                      step="any"
-                      required
-                      value={formAmount}
-                      onChange={(e) => setFormAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                    />
+                {formType === "gam_eya" ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">القسط الشهري (ج.م):</label>
+                        <input
+                          type="number"
+                          step="any"
+                          required
+                          value={formInstallment}
+                          onChange={(e) => setFormInstallment(e.target.value)}
+                          placeholder="مثال: 1000"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">عدد الشهور:</label>
+                        <input
+                          type="number"
+                          required
+                          value={formMonths}
+                          onChange={(e) => setFormMonths(e.target.value)}
+                          placeholder="مثال: 10"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">يوم السداد كل شهر:</label>
+                        <input
+                          type="number"
+                          value={formDayNum}
+                          onChange={(e) => setFormDayNum(e.target.value)}
+                          placeholder="مثال: 5"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">شهر القبض (اختياري):</label>
+                        <input
+                          type="number"
+                          value={formReceiptMonth}
+                          onChange={(e) => setFormReceiptMonth(e.target.value)}
+                          placeholder="مثال: 5"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">تاريخ القبض (اختياري):</label>
+                        <input
+                          type="date"
+                          value={formReceiptDate}
+                          onChange={(e) => setFormReceiptDate(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">أقساط مدفوعة مسبقاً:</label>
+                        <input
+                          type="number"
+                          value={formPaidInstallments}
+                          onChange={(e) => setFormPaidInstallments(e.target.value)}
+                          placeholder="مثال: 3"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    {parseFloat(formInstallment) > 0 && parseFloat(formMonths) > 0 && (
+                      <div className="rounded-xl bg-indigo-950/40 border border-indigo-500/25 px-3 py-2 text-xs text-slate-300 flex items-center justify-between">
+                        <span>إجمالي القبض (القسط × الشهور):</span>
+                        <span className="font-black text-indigo-300">
+                          {formatEgp(egpToPiastres(parseFloat(formInstallment) * parseFloat(formMonths)))}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">تاريخ الاستحقاق:</label>
-                    <input
-                      type="date"
-                      value={formDueDate}
-                      onChange={(e) => setFormDueDate(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                    />
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">إجمالي المبلغ (ج.م):</label>
+                      <input
+                        type="number"
+                        step="any"
+                        required
+                        value={formAmount}
+                        onChange={(e) => setFormAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">تاريخ الاستحقاق:</label>
+                      <input
+                        type="date"
+                        value={formDueDate}
+                        onChange={(e) => setFormDueDate(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="flex gap-2 pt-3">
                   <button
@@ -638,27 +914,105 @@ export default function DebtsPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">إجمالي المبلغ (ج.م):</label>
-                  <input
-                    type="number"
-                    step="any"
-                    required
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">تاريخ الاستحقاق:</label>
-                  <input
-                    type="date"
-                    value={editDueDate}
-                    onChange={(e) => setEditDueDate(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
+                {editType === "gam_eya" && gamMeta[editDebt.id] ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">القسط الشهري (ج.م):</label>
+                        <input
+                          type="number"
+                          step="any"
+                          required
+                          value={editInstallment}
+                          onChange={(e) => setEditInstallment(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">عدد الشهور:</label>
+                        <input
+                          type="number"
+                          required
+                          value={editMonths}
+                          onChange={(e) => setEditMonths(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">يوم السداد كل شهر:</label>
+                        <input
+                          type="number"
+                          value={editDayNum}
+                          onChange={(e) => setEditDayNum(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">شهر القبض (اختياري):</label>
+                        <input
+                          type="number"
+                          value={editReceiptMonth}
+                          onChange={(e) => setEditReceiptMonth(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">تاريخ القبض:</label>
+                        <input
+                          type="date"
+                          value={editDueDate}
+                          onChange={(e) => setEditDueDate(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">متابعة من قسط رقم:</label>
+                        <input
+                          type="number"
+                          value={editPaidInstallments}
+                          onChange={(e) => setEditPaidInstallments(e.target.value)}
+                          placeholder="القسط الأخير المدفوع"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    {parseFloat(editInstallment) > 0 && parseFloat(editMonths) > 0 && (
+                      <div className="rounded-xl bg-indigo-950/40 border border-indigo-500/25 px-3 py-2 text-xs text-slate-300 flex items-center justify-between">
+                        <span>إجمالي القبض (القسط × الشهور):</span>
+                        <span className="font-black text-indigo-300">
+                          {formatEgp(egpToPiastres(parseFloat(editInstallment) * parseFloat(editMonths)))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">إجمالي المبلغ (ج.م):</label>
+                      <input
+                        type="number"
+                        step="any"
+                        required
+                        value={editAmount}
+                        onChange={(e) => setEditAmount(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">تاريخ الاستحقاق:</label>
+                      <input
+                        type="date"
+                        value={editDueDate}
+                        onChange={(e) => setEditDueDate(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-3">
                   <button

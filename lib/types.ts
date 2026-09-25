@@ -54,7 +54,8 @@ export type ParsedActionType =
   | "bill_create"
   | "budget_set"
   | "transaction_delete"
-  | "transaction_update";
+  | "transaction_update"
+  | "gam_eya_create";
 
 export interface ParsedAction {
   type: ParsedActionType;
@@ -74,6 +75,10 @@ export interface ParsedAction {
   debtKind?: "gam_eya" | "i_owe" | "owed_to_me";
   frequency?: "weekly" | "monthly" | "quarterly" | "yearly";
   dayOfMonth?: number;
+  monthlyInstallment?: number; // piastres — gam'eya installment per month
+  totalMonths?: number; // gam'eya cycle length in months
+  receiptMonth?: number; // 1-based month index within the cycle when the user collects the pot
+  installmentsPaid?: number; // gam'eya installments already paid
   targetAmount?: number; // piastres (savings goal target)
   newAmount?: number; // piastres (transaction_update new amount)
   newCategory?: string; // transaction_update new category
@@ -123,6 +128,23 @@ export interface DebtItem {
   due_date?: string;
   status: "pending" | "paid";
   created_at: string;
+}
+
+/** Structured metadata for a gam'eya (جمعية) — stored in settings as JSON under `gam_eya_meta:<debtId>`. */
+export interface GamEyaMeta {
+  monthlyInstallment: number; // piastres per month
+  totalMonths: number; // cycle length
+  receiptMonth: number; // 1-based month index the user collects the pot (0 = not scheduled)
+  installmentDay: number; // day-of-month for payments (0 = not set)
+  startDate?: string; // YYYY-MM-DD of the first installment
+}
+
+export interface GamEyaInstallment {
+  label: string; // e.g. "القسط 3"
+  monthIndex: number; // 1-based
+  dueDate: string | null; // YYYY-MM-DD or null
+  amount: number; // piastres
+  paid: boolean;
 }
 
 export interface SavingsGoalItem {

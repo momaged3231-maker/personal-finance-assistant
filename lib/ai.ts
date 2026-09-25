@@ -256,7 +256,7 @@ function extractPersonName(raw: string): string | undefined {
   const prefixed = raw.match(/(?:ل|لم|من|عند|عن|مع)\s*([\u0600-\u06FF]{3,})/i);
   if (prefixed) {
     const name = prefixed[1];
-    if (!/^(دين|قرض|جديدة|جديد|البنك|الكاش|فودافون|مصروف|عملية|سجائر|اكل)/i.test(name)) {
+    if (!/^(دين|قرض|جديدة|جديد|البنك|الكاش|فودافون|مصروف|عملية|سجائر|اكل|مدة|لمدة|شهور|اشهر|شهر|الشهر|قسط|كل|عليك|عليا)/i.test(name)) {
       return name;
     }
   }
@@ -280,20 +280,113 @@ function extractDebtPairs(raw: string): Array<{ person: string; amount: number }
     .filter(Boolean);
   const pairs: Array<{ person: string; amount: number }> = [];
   for (const seg of segs) {
+    const digitsSeg = seg.replace(/[٠-٩]/g, (d) => String(AR_DIGITS.indexOf(d)));
     const m =
-      seg.match(/(?:ل|لم|عند|من|سجل)\s*([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)/i) ||
-      seg.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|ججم|ج)?\s*(?:ل|لم)\s*([\u0600-\u06FF]{3,})/i) ||
-      seg.match(/^([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)$/i);
+      digitsSeg.match(/(?:ل|لم|عند|من|سجل)\s*([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)/i) ||
+      digitsSeg.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|ججم|ج)?\s*(?:ل|لم)\s*([\u0600-\u06FF]{3,})/i) ||
+      digitsSeg.match(/^([\u0600-\u06FF]{3,})\s*(\d+(?:\.\d+)?)$/i);
     if (!m) continue;
     const a = m[1];
     const b = m[2];
     const person = /^[\u0600-\u06FF]/.test(a) ? a : b;
     const amount = parseFloat(/^[\u0600-\u06FF]/.test(a) ? b : a);
-    if (person && !/^(دين|ديون|سجل|اضيف|ضيف|لي|عندي|معايا|قرض|كل|ال)/i.test(person) && isFinite(amount) && amount > 0) {
+    if (
+      person &&
+      !/^(دين|ديون|سجل|اضيف|ضيف|لي|عندي|معايا|قرض|كل|ال|مدة|لمدة|شهور|اشهر|شهر|الشهر|قسط|استحقاق)/i.test(person) &&
+      isFinite(amount) &&
+      amount > 0
+    ) {
       pairs.push({ person, amount });
     }
   }
   return pairs;
+}
+
+// ------------------------------------------------------------------
+// Gam'eya (جمعية) structure parsing — cyclic savings club
+// "جمعية قسطها 1000 شهريا لمدة 10 شهور وقبضي في الشهر الخامس"
+// ------------------------------------------------------------------
+function gamEyaReceiptDateFromNow(receiptMonth: number, installmentDay = 1): string {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth() + (receiptMonth - 1), 1);
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(Math.max(1, Math.min(installmentDay, 28))).padStart(2, "0")}`;
+}
+
+const AR_ORDINALS: Array<[RegExp, number]> = [
+  [/الاول|الأول|اول\b|\bواحد\b/, 1],
+  [/التاني|الثاني|ثاني\b|\bاتنين\b/, 2],
+  [/التالت|الثالث|ثالث\b|\bتلاته\b|\bتلاتة\b/, 3],
+  [/الرابع|\bأربعه\b|\bأربعة\b|\bاربع\b/, 4],
+  [/الخامس|\bخمسه\b|\bخمسة\b/, 5],
+  [/السادس|\bسته\b|\bستة\b/, 6],
+  [/السابع|\bسبع(?:ة|ه)\b/, 7],
+  [/التامن|الثامن|\bثمانيه\b|\bثمانية\b/, 8],
+  [/التاسع|\bتسعه\b|\bتسعة\b/, 9],
+  [/العاشر|\bعشره\b|\bعشرة\b/, 10],
+];
+
+/** Tries to extract a strict gam'eya structure (installment + cycle months, optionally receipt month/day/date). Returns null if not strict. */
+function parseGamEyaStructure(
+  raw: string
+): null | {
+  installment: number;
+  months: number;
+  receiptMonth?: number;
+  installmentDay?: number;
+  receiptDate?: string;
+} {
+  const q = raw.replace(/[٠-٩]/g, (d) => String(AR_DIGITS.indexOf(d)));
+
+  let installment: number | undefined;
+  const installMatch =
+    q.match(/قسط(ها|ي| الشهري| الشهريه|ه)?\s*(?:بـ?|هو|يساوي| بتاعتها)?\s*(\d+(?:\.\d+)?)/i) ||
+    q.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|جنية|ج\.م)?\s*(?:شهريا|شهري\b|شهريه|كل\s*شهر|في\s*ال?شهر\b)/i) ||
+    q.match(/(\d+(?:\.\d+)?)\s*(?:جنيه|جنية|ج\.م)\s*.*?(?:ال?قسط|على\s*ال?شهر)/i);
+  if (installMatch) installment = Number(installMatch[installMatch.length - 1]);
+  if (!installment) {
+    const bare = q.match(/(?:جمعية|جامعية|جمعيه)\s*(?:بالمبلغ|بـ?|بقيمة|)\s*(\d+(?:\.\d+)?)/i);
+    if (bare) installment = Number(bare[1]);
+  }
+  if (!installment || !isFinite(installment) || installment <= 0) return null;
+
+  let months: number | undefined;
+  const monthsMatch =
+    q.match(/(?:على|لمدة|لـ?|مدتها|عدد)\s*(\d{1,2})\s*(?:شهور|اشهر|شهر\b)/i) ||
+    q.match(/(\d{1,2})\s*(?:شهور|اشهر\b)/i);
+  if (monthsMatch) months = Number(monthsMatch[1]);
+  if (!months || !isFinite(months) || months <= 0) return null;
+
+  let receiptMonth: number | undefined;
+  const receiptAnchor = q.match(/(قبضي|اقبض|هقبض|بستلم|باخد\s*ال?قبض|القبض|ميعاد\s*ال?قبض|شهر\s*ال?قبض)/i);
+  if (receiptAnchor && receiptAnchor.index !== undefined) {
+    const tail = q.slice(receiptAnchor.index, receiptAnchor.index + 40);
+    for (const [re, n] of AR_ORDINALS) {
+      if (re.test(tail)) {
+        receiptMonth = n;
+        break;
+      }
+    }
+    if (!receiptMonth) {
+      const digit = tail.match(/(\d{1,2})/);
+      if (digit) receiptMonth = Number(digit[1]);
+    }
+  }
+
+  let installmentDay: number | undefined;
+  const dayMatch = q.match(/(?:يوم|بيوم|كل\s*شهر\s*يوم)\s*(\d{1,2})/i);
+  if (dayMatch) installmentDay = Number(dayMatch[1]);
+
+  let receiptDate: string | undefined;
+  const dateMatch = q.match(/بتاريخ\s*(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})(?:\s*[\/\-\.]\s*(\d{2,4}))?/i);
+  if (dateMatch) {
+    const dd = Number(dateMatch[1] || "1");
+    const mm = Number(dateMatch[2] || "1");
+    let yyyy = dateMatch[3] ? Number(dateMatch[3]) : new Date().getFullYear();
+    if (yyyy < 100) yyyy = 2000 + yyyy;
+    receiptDate = `${yyyy}-${String(mm).padStart(2, "0")}-${String(Math.min(28, dd)).padStart(2, "0")}`;
+  }
+
+  return { installment, months, receiptMonth, installmentDay, receiptDate };
 }
 
 // ------------------------------------------------------------------
@@ -641,6 +734,55 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
 
   const hasRecurrenceHint = /كل\s*شهر|شهري|شهرية|دورية|يوم\s*[0-9٠-٩]{1,2}/i.test(query);
 
+  // 0a. Structured gam'eya (جمعية): قسط شهري + عدد شهور + موعد القبض
+  // "دخلت جمعية قسطها 1000 شهريا لمدة 10 شهور وقبضي في الشهر الخامس"
+  const gamEyaQuery = /جامعية|جمعية|جامعيه|جمعيه/i.test(query);
+  const gamStructure = gamEyaQuery ? parseGamEyaStructure(rawQuery) : null;
+  if (gamEyaQuery && gamStructure) {
+    const gamPersonName =
+      extractPersonName(rawQuery) ||
+      (rawQuery.match(/جمعية(?:\s+ال)?ه\s+([\u0600-\u06FF]{3,})/i) || [])[1] ||
+      (rawQuery.match(/امين(?:ها|ه)?\s+([\u0600-\u06FF]{3,})/i) || [])[1];
+    const effectiveName = gamPersonName;
+    const pot = gamStructure.installment * gamStructure.months;
+    const dueDate =
+      gamStructure.receiptDate ||
+      (gamStructure.receiptMonth
+        ? gamEyaReceiptDateFromNow(gamStructure.receiptMonth, gamStructure.installmentDay || 1)
+        : undefined);
+    const lines = [
+      `جمعية (نظام القبض الشهري) 💳`,
+      `قسط شهري: ${gamStructure.installment} جنيه × ${gamStructure.months} شهور`,
+      `إجمالي القبض: ${pot} جنيه`,
+    ];
+    if (gamStructure.receiptMonth) {
+      lines.push(`📅 شهر القبض: ${gamStructure.receiptMonth}${dueDate ? ` — بتاريخ ${dueDate}` : ""}`);
+    }
+    if (gamStructure.installmentDay) lines.push(`📆 ميعاد السداد كل شهر: يوم ${gamStructure.installmentDay}`);
+    lines.push(`📝 ${effectiveName ? `جمعية: ${effectiveName}` : "جمعية جديدة"}`);
+    lines.push(`تأكيد الحفظ؟`);
+    return {
+      text: "وصلني، جاهز أسجل الجمعية بالتفاصيل دي:",
+      action: {
+        type: "gam_eya_create",
+        amount: egpToPiastres(pot),
+        amountEgp: pot,
+        description: `جمعية${effectiveName ? `: ${effectiveName}` : ""}`,
+        category: "ديون وقروض",
+        accountId: cashAcc.id,
+        accountName: cashAcc.name,
+        personName: effectiveName,
+        monthlyInstallment: egpToPiastres(gamStructure.installment),
+        totalMonths: gamStructure.months,
+        receiptMonth: gamStructure.receiptMonth,
+        dayOfMonth: gamStructure.installmentDay,
+        dueDate,
+        requiresConfirmation: true,
+        confirmationMessage: lines.join("\n"),
+      },
+    };
+  }
+
   // 0. Bank / InstaPay / Vodafone Cash notification pasting:
   // "قرأت إشعار البنك: تم خصم 200 ج.م من حسابك لدى المتجر..."
   const isBankNotification =
@@ -662,11 +804,13 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
     (/^(سجل|صرفت|دفعت|اشتريت|ادفع|خصم)($|\s|[0-9])/i.test(query) ||
       (/(جنيه|ج\.م)/.test(query) && /(سجائر|اكل|شرب|غدا|عشا|فطار|بنزين|مواصلات|تاكسي|اوبر|قهوة|شاي|سوبرماركت|لبن)/i.test(query))) &&
     !/دين|ديون|قرض|سداد|مستحقات|هدف|ادخار|توفير/i.test(query) &&
-    !(hasRecurrenceHint && /فاتورة|اشتراك/i.test(query));
+    !(hasRecurrenceHint && /فاتورة|اشتراك/i.test(query)) &&
+    !/جامعية|جمعية|جامعيه|جمعيه/i.test(query);
 
   const isIncomeCommand =
-    /^(دخلت|جالي|قبضت|كسبت|استلمت|دخل|ايراد)($|\s|[0-9])/i.test(query) ||
-    (/(صيانة|مرتب|شغل|ارباح|عمولة)/i.test(query) && /(دخلت|قبضت|جالي)/i.test(query));
+    (/^(دخلت|جالي|قبضت|كسبت|استلمت|دخل|ايراد)($|\s|[0-9])/i.test(query) ||
+      (/(صيانة|مرتب|شغل|ارباح|عمولة)/i.test(query) && /(دخلت|قبضت|جالي)/i.test(query))) &&
+    !/جامعية|جمعية|جامعيه|جمعيه/i.test(query);
 
   const isTransferCommand =
     /^(حولت|حول|نقلت|انقل|ابعت|تحويل)($|\s|[0-9])/i.test(query) &&
@@ -1440,6 +1584,7 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
    الأنواع الممكنة:
    - expense / income / transfer: عملية عادية (amountEgp مطلوب)
    - debt_create: إضافة دين — amountEgp + description (عنوان الدين) + personName (اسم الشخص اختياري) + debtKind من ("i_owe" دين عليك | "owed_to_me" دين مستحق لك | "gam_eya" جامعية/جمعية) + dueDate اختياري بصيغة YYYY-MM-DD
+   - gam_eya_create: تسجيل جمعية بنظام القبض — monthlyInstallment (القسط الشهري بالجنيه) + totalMonths (عدد شهور الدورة) + receiptMonth (شهر القبض ترتيباً من 1) + dayOfMonth (يوم السداد كل شهر) + dueDate (تاريخ القبض YYYY-MM-DD اختياري) — amount = إجمالي القبض (القسط × الشهور)
    - debt_payment: سداد دفعة من دين — amountEgp + description (عنوان الدين أو اسم الشخص)
    - debt_delete: حذف دين — description (عنوان الدين)
    - savings_goal_create: هدف ادخار جديد — targetAmountEgp (الهدف الكلي بالجنيه) + description (اسم الهدف)

@@ -8,6 +8,8 @@ import {
   egpToPiastres,
   formatEgp,
   piastresToEgp,
+  GamEyaMeta,
+  GamEyaInstallment,
 } from "./types";
 
 export * from "./types";
@@ -796,6 +798,190 @@ export async function deleteDebt(id: number, userId?: number) {
   if (userId) query.eq("user_id", userId);
   const { error } = await query;
   if (error) throw error;
+  if (userId) {
+    try {
+      await deleteGamEyaMeta(userId, id);
+    } catch {
+      /* meta cleanup is best-effort */
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// Gam'eya (جمعية) structured model — cyclic savings club
+// القسطة الشهرية + عدد الشهور + موعد القبض + جدول الأقساط
+// The debt row keeps: amount = pot (قسط×شهور), paid_amount =
+// مجموع الأقساط المدفوعة, due_date = تاريخ القبض. The full
+// structure is persisted as JSON in settings under gam_eya_meta:<id>.
+// -------------------------------------------------------------
+const GAM_EYA_PREFIX = "gam_eya_meta:";
+
+function gamEyaMonthKey(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(Math.max(1, Math.min(day, 28))).padStart(2, "0")}`;
+}
+
+export async function setGamEyaMeta(userId: number, debtId: number, meta: GamEyaMeta): Promise<void> {
+  await updateSetting(`${GAM_EYA_PREFIX}${debtId}`, JSON.stringify(meta), userId);
+}
+
+export async function getGamEyaMeta(userId: number, debtId: number): Promise<GamEyaMeta | null> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("settings")
+    .select("value")
+    .eq("user_id", userId)
+    .eq("key", `${GAM_EYA_PREFIX}${debtId}`)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || !(data as { value?: string }).value) return null;
+  try {
+    return JSON.parse((data as { value: string }).value) as GamEyaMeta;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteGamEyaMeta(userId: number, debtId: number): Promise<void> {
+  const client = requireSupabase();
+  await client.from("settings").delete().eq("user_id", userId).eq("key", `${GAM_EYA_PREFIX}${debtId}`);
+}
+
+export async function getAllGamEyaMeta(userId: number): Promise<Record<number, GamEyaMeta>> {
+  const settings = await getSettings(userId);
+  const map: Record<number, GamEyaMeta> = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (!key.startsWith(GAM_EYA_PREFIX)) continue;
+    const id = Number(key.slice(GAM_EYA_PREFIX.length));
+    if (!id) continue;
+    try {
+      map[id] = JSON.parse(value) as GamEyaMeta;
+    } catch {
+      /* ignore malformed rows */
+    }
+  }
+  return map;
+}
+
+/** Builds the monthly installment schedule for a gam'eya. */
+export function computeGamEyaInstallments(
+  debt: { paid_amount: number },
+  meta: GamEyaMeta
+): GamEyaInstallment[] {
+  const { monthlyInstallment, totalMonths, installmentDay } = meta;
+  if (!monthlyInstallment || !totalMonths) return [];
+  const now = new Date();
+  const start = meta.startDate
+    ? meta.startDate
+    : (() => {
+        const day = installmentDay || 1;
+        const offset = day >= now.getDate() ? 0 : 1;
+        return gamEyaMonthKey(now.getFullYear(), now.getMonth() + 1 + offset, day);
+      })();
+  const paidCount = Math.floor((debt.paid_amount || 0) / Math.max(monthlyInstallment, 1));
+  const out: GamEyaInstallment[] = [];
+  for (let i = 0; i < totalMonths; i++) {
+    const dt = new Date(start + "T00:00:00");
+    dt.setMonth(dt.getMonth() + i);
+    const monthIndex = i + 1;
+    out.push({
+      label: monthIndex === meta.receiptMonth ? `القسط ${monthIndex} ⭐ شهر القبض` : `القسط ${monthIndex}`,
+      monthIndex,
+      dueDate: gamEyaMonthKey(dt.getFullYear(), dt.getMonth() + 1, installmentDay || 1),
+      amount: monthlyInstallment,
+      paid: i < paidCount,
+    });
+  }
+  return out;
+}
+
+/** Creates the debt row + structured metadata for a gam'eya. Returns the debt id. */
+export async function createGamEya(data: {
+  title: string;
+  personName?: string;
+  monthlyInstallment: number; // piastres
+  totalMonths: number;
+  receiptMonth?: number;
+  installmentDay?: number;
+  dueDate?: string; // receipt date YYYY-MM-DD
+  installmentsPaid?: number;
+  userId?: number;
+}): Promise<number> {
+  const userId = data.userId || 1;
+  const months = Math.max(1, Number(data.totalMonths) || 1);
+  const installment = Number(data.monthlyInstallment) || 0;
+  const pot = installment * months;
+  const id = await createDebt({
+    type: "gam_eya",
+    title: data.title,
+    personName: data.personName,
+    amount: pot,
+    dueDate: data.dueDate,
+    userId,
+  });
+  await setGamEyaMeta(userId, id, {
+    monthlyInstallment: installment,
+    totalMonths: months,
+    receiptMonth: data.receiptMonth || 0,
+    installmentDay: data.installmentDay || 1,
+  });
+  const paid = (Number(data.installmentsPaid) || 0) * installment;
+  if (paid > 0) {
+    await updateDebtPayment(id, paid, undefined, userId);
+  }
+  return id;
+}
+
+/** Updates the debt + gam'eya metadata together. */
+export async function updateGamEya(
+  id: number,
+  data: {
+    title?: string;
+    personName?: string | null;
+    monthlyInstallment?: number;
+    totalMonths?: number;
+    receiptMonth?: number;
+    installmentDay?: number;
+    dueDate?: string | null;
+    installmentsPaid?: number;
+  },
+  userId?: number
+): Promise<void> {
+  const uid = userId || 1;
+  const client = requireSupabase();
+  const { data: existing } = await client.from("debts").select("paid_amount").eq("id", id);
+  const currentPaid = Number(((existing || [])[0] as { paid_amount?: number })?.paid_amount || 0);
+  const current = await getGamEyaMeta(uid, id);
+
+  const meta: GamEyaMeta = {
+    monthlyInstallment: data.monthlyInstallment ?? current?.monthlyInstallment ?? 0,
+    totalMonths: data.totalMonths ?? current?.totalMonths ?? 1,
+    receiptMonth: data.receiptMonth ?? current?.receiptMonth ?? 0,
+    installmentDay: data.installmentDay ?? current?.installmentDay ?? 1,
+    startDate: current?.startDate,
+  };
+
+  const updateObj: Record<string, unknown> = {};
+  if (data.title) updateObj.title = data.title;
+  if ("personName" in data) updateObj.person_name = data.personName ?? null;
+  if ("dueDate" in data) updateObj.due_date = data.dueDate ?? null;
+  if (data.monthlyInstallment || data.totalMonths || current) {
+    updateObj.amount = meta.monthlyInstallment * meta.totalMonths;
+    await setGamEyaMeta(uid, id, meta);
+  }
+  if (Object.keys(updateObj).length > 0) {
+    let query = client.from("debts").update(updateObj).eq("id", id);
+    if (uid) query = query.eq("user_id", uid);
+    const { error } = await query;
+    if (error) throw error;
+  }
+
+  if (data.installmentsPaid !== undefined && meta.monthlyInstallment > 0) {
+    await updateDebtPayment(id, data.installmentsPaid * meta.monthlyInstallment, undefined, uid);
+  } else if (data.monthlyInstallment && current && current.monthlyInstallment !== data.monthlyInstallment && currentPaid > 0) {
+    // Re-scale paid amount to the new installment size (keep installment count stable)
+    const oldCount = Math.floor(currentPaid / Math.max(current.monthlyInstallment, 1));
+    await updateDebtPayment(id, oldCount * meta.monthlyInstallment, undefined, uid);
+  }
 }
 
 // -------------------------------------------------------------

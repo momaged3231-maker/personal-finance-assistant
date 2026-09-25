@@ -16,6 +16,7 @@ import {
   setCategoryBudget,
   getDebts,
   createDebt,
+  createGamEya,
   updateDebtPayment,
   deleteDebt,
   getSavingsGoals,
@@ -134,6 +135,23 @@ export async function POST(req: NextRequest) {
           });
           replyText = "تم تسجيل الدين بنجاح ✅";
           break;
+        case "gam_eya_create": {
+          const months = action.totalMonths || 1;
+          const installment = action.monthlyInstallment || action.amount || 0;
+          await createGamEya({
+            title: action.description,
+            personName: action.personName,
+            monthlyInstallment: installment,
+            totalMonths: months,
+            receiptMonth: action.receiptMonth,
+            installmentDay: action.dayOfMonth,
+            dueDate: action.dueDate,
+            installmentsPaid: action.installmentsPaid,
+            userId,
+          });
+          replyText = `تم تسجيل الجمعية ✅ قسط شهري ${formatEgp(installment)} × ${months} شهر = إجمالي قبض ${formatEgp(installment * months)}`;
+          break;
+        }
         case "debt_payment": {
           const debts = await getDebts(userId);
           const target = resolveEntity(debts, action);
