@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   ScanLine,
 } from "lucide-react";
+import WaitlistForm from "@/components/WaitlistForm";
 
 export default function LandingPage() {
   const [faqOpen, setFaqOpen] = useState<number | null>(0);
@@ -176,7 +177,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             1. HERO — the relationship, not the spreadsheet
         ───────────────────────────────────────────── */}
-        <section className="text-center max-w-5xl mx-auto pt-4 md:pt-10 px-4">
+        <section id="top" className="text-center max-w-5xl mx-auto pt-4 md:pt-10 px-4 scroll-mt-24">
           <span className="lp-eyebrow">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             صحبي — مساعدك المالي الشخصي
@@ -202,6 +203,14 @@ export default function LandingPage() {
             <Link href="/login" className="lp-btn lp-btn-ghost w-full sm:w-auto">
               تسجيل الدخول
             </Link>
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+            <a href="#features" className="lp-quick-link">المميزات</a>
+            <a href="#how" className="lp-quick-link">إزاي شغال؟</a>
+            <a href="#decision" className="lp-quick-link">لحظة القرار</a>
+            <a href="#pricing" className="lp-quick-link">الباقات</a>
+            <a href="#faq" className="lp-quick-link">الأسئلة</a>
           </div>
 
           <p className="lp-sub mt-5 text-sm font-medium">
@@ -325,7 +334,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             2. THE LOOP — 3 steps only
         ───────────────────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-4">
+        <section id="how" className="max-w-5xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">إزاي شغال؟</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -357,7 +366,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             3. DECISION MOMENT — before you pay, ask
         ───────────────────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-4">
+        <section id="decision" className="max-w-5xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">لحظة القرار</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -427,7 +436,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             4. THE FOLLOW-UP — the core idea
         ───────────────────────────────────────────── */}
-        <section className="max-w-4xl mx-auto px-4">
+        <section id="core" className="max-w-4xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">الفكرة الأساسية</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -462,7 +471,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             5. REAL FEATURES — what exists today, honestly
         ───────────────────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-4">
+        <section id="features" className="max-w-5xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">فعلي وشغال</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -497,7 +506,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             6. TRUST — your money is not with us
         ───────────────────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-4">
+        <section id="trust" className="max-w-5xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">الأمان والخصوصية</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -527,7 +536,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             7. PRICING — two moments, not a SaaS table
         ───────────────────────────────────────────── */}
-        <section className="max-w-3xl mx-auto px-4">
+        <section id="pricing" className="max-w-3xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <span className="lp-tag mb-3">بس وبس</span>
             <h2 className="lp-title text-3xl sm:text-4xl md:text-5xl mt-3">
@@ -606,7 +615,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             8. FAQ
         ───────────────────────────────────────────── */}
-        <section className="max-w-3xl mx-auto px-4">
+        <section id="faq" className="max-w-3xl mx-auto px-4 scroll-mt-28">
           <div className="text-center max-w-xl mx-auto mb-10">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2">
               <Lock className="w-3.5 h-3.5 text-emerald-600" />
@@ -650,7 +659,7 @@ export default function LandingPage() {
         {/* ─────────────────────────────────────────────
             9. FINAL CTA
         ───────────────────────────────────────────── */}
-        <section className="max-w-4xl mx-auto px-4 text-center">
+        <section id="start" className="max-w-4xl mx-auto px-4 text-center scroll-mt-28">
           <div className="lp-card lp-card-deep p-8 sm:p-14 relative overflow-hidden bg-gradient-to-br from-white via-white to-emerald-50/70">
             <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full bg-emerald-400/15 blur-3xl pointer-events-none" />
             <div className="absolute -bottom-20 -left-10 w-64 h-64 rounded-full bg-blue-400/15 blur-3xl pointer-events-none" />
@@ -675,6 +684,26 @@ export default function LandingPage() {
                 لا بطاقة بنكية • لا ربط بحسابك البنكي • تحكم كامل في بياناتك
               </p>
             </div>
+          </div>
+        </section>
+
+        {/* ─────────────────────────────────────────────
+            10. WAITLIST — for early birds not ready to sign up
+        ───────────────────────────────────────────── */}
+        <section id="waitlist" className="max-w-3xl mx-auto px-4 scroll-mt-28">
+          <div className="text-center max-w-2xl mx-auto mb-10">
+            <span className="lp-tag mb-3">قايمة الانتظار</span>
+            <h2 className="lp-title text-3xl sm:text-4xl">
+              لسه مش هتسجّل النهارده؟ خليك جوه الحلقة.
+            </h2>
+            <p className="lp-sub mt-4 text-base">
+              سيب لنا إيميلك وهدفك المالي، وهنوصل لك بأول ما يفتح التسجيل الفعلي
+              — من غير رسائل مزعجة، وعد.
+            </p>
+          </div>
+
+          <div className="lp-card lp-card-deep p-6 sm:p-8">
+            <WaitlistForm />
           </div>
         </section>
 

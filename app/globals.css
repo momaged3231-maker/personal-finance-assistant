@@ -663,3 +663,36 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #00DBB7;
 }
+
+/* Smooth in-page navigation (section anchors) */
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Landing quick-link pills (hero secondary nav) */
+.lp-quick-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  background: #FFFFFF;
+  border: 1px solid #D8E2F0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  text-decoration: none;
+  transition: all 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lp-quick-link:hover {
+  transform: translateY(-2px);
+  border-color: #10B981;
+  color: #047857;
+  box-shadow: 0 10px 22px -8px rgba(5, 150, 105, 0.2);
+}

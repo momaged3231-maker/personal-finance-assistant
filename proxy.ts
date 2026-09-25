@@ -28,7 +28,11 @@ export function proxy(request: NextRequest) {
     pathname === "/landing" ||
     pathname === "/login" ||
     pathname === "/signup" ||
-    pathname.startsWith("/api/auth");
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
+    pathname.startsWith("/google") ||
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/marketing");
 
   // 4. Redirect unauthenticated users away from protected routes.
   //    Root (/) is public: its page renders the landing for guests.

@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
+import GoogleAuthButton from "@/components/GoogleAuthButton";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -77,6 +78,14 @@ export default function LoginPage() {
 
         {/* Main Card */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 sm:p-7 shadow-2xl backdrop-blur-xl space-y-5">
+          <GoogleAuthButton mode="login" />
+
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-800" />
+            <span className="text-[11px] text-slate-500 font-semibold">أو</span>
+            <div className="h-px flex-1 bg-slate-800" />
+          </div>
+
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -158,6 +167,16 @@ export default function LoginPage() {
             >
               <span>العودة لصفحة التعريف ومميزات المنظومة</span>
               <ArrowRight className="w-3 h-3 rotate-180" />
+            </Link>
+          </div>
+
+          <div className="flex items-center justify-center gap-4 text-[11px] text-slate-500">
+            <Link href="/privacy" className="hover:text-slate-300 transition-colors">
+              سياسة الخصوصية
+            </Link>
+            <span className="w-1 h-1 rounded-full bg-slate-700" />
+            <Link href="/terms" className="hover:text-slate-300 transition-colors">
+              شروط الاستخدام
             </Link>
           </div>
         </div>

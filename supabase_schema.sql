@@ -181,6 +181,27 @@ CREATE TABLE IF NOT EXISTS public.subscription_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+-- 14. Marketing Leads Table (قائمة الإشعارات وقائمة الإطلاق التسويقية)
+CREATE TABLE IF NOT EXISTS public.marketing_leads (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT,
+  goal TEXT,
+  source TEXT NOT NULL DEFAULT 'waitlist' CHECK (source IN ('waitlist', 'signup', 'google')),
+  user_id BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'subscribed' CHECK (status IN ('subscribed', 'opted_out', 'converted')),
+  converted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- 15. User Marketing Profiles Table (بيانات المشتركين لهدف التسويق المستقبلي)
+CREATE TABLE IF NOT EXISTS public.user_marketing_profiles (
+  user_id BIGINT PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  primary_goal TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
 -- =========================================================
 -- Performance Indexes
 -- =========================================================
@@ -192,6 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_savings_goals_user ON public.savings_goals(user_i
 CREATE INDEX IF NOT EXISTS idx_ai_messages_user ON public.ai_messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_recurring_bills_user_due ON public.recurring_bills(user_id, next_due_date) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_recurring_bills_due_today ON public.recurring_bills(next_due_date) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_source ON public.marketing_leads(source);
 
 -- =========================================================
 -- Account Balances View (أرصدة الحسابات الجارية)
@@ -239,6 +261,8 @@ ALTER TABLE public.ai_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.blocked_devices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.live_visitors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.subscription_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_marketing_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recurring_bills ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;

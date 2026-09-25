@@ -29,10 +29,23 @@ interface SessionData {
   isImpersonating: boolean;
 }
 
+const LANDING_LINKS = [
+  { href: "#how", label: "إزاي شغال؟" },
+  { href: "#features", label: "المميزات" },
+  { href: "#decision", label: "لحظة القرار" },
+  { href: "#pricing", label: "الباقات" },
+  { href: "#faq", label: "الأسئلة" },
+  { href: "#waitlist", label: "قايمة الانتظار" },
+] as const;
+
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<SessionData | null>(null);
+
+  // Guest marketing mode: light theme, clean CTAs (works at / and /landing)
+  const isGuestLanding = !session?.authenticated && (pathname === "/landing" || pathname === "/");
+  const [activeSection, setActiveSection] = useState<string>("");
 
   const fetchSession = useCallback(async () => {
     try {
@@ -49,6 +62,29 @@ export default function Navbar() {
   useEffect(() => {
     fetchSession();
   }, [fetchSession, pathname]);
+
+  // Landing scroll-spy for guest nav anchors.
+  useEffect(() => {
+    if (!isGuestLanding) {
+      setActiveSection("");
+      return;
+    }
+    const ids = LANDING_LINKS.map((link) => link.href.slice(1));
+    const sections = ids
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => el !== null);
+    if (!sections.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActiveSection(`#${entry.target.id}`);
+        }
+      },
+      { rootMargin: "-40% 0px -55% 0px", threshold: 0 }
+    );
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [isGuestLanding, pathname]);
 
   async function handleLogout() {
     try {
@@ -103,9 +139,6 @@ export default function Navbar() {
 
   const badgeInfo = planBadge(session?.user?.plan);
 
-  // Guest marketing mode: light theme, clean CTAs (works at / and /landing)
-  const isGuestLanding = !session?.authenticated && (pathname === "/landing" || pathname === "/");
-
   return (
     <>
       {/* 1. IMPERSONATION BANNER (SaaS Super Admin Live View) */}
@@ -158,20 +191,41 @@ export default function Navbar() {
 
         {/* Guest on marketing page: dedicated clean light landing links */}
         {isGuestLanding ? (
-          <div className="flex items-center gap-2.5">
-            <Link
-              href="/login"
-              className="px-4 py-2 rounded-full border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-sm"
-            >
-              تسجيل الدخول
-            </Link>
-            <Link
-              href="/signup"
-              className="lp-btn lp-btn-primary text-xs !py-2.5 !px-5"
-            >
-              ابدأ مجاناً
-            </Link>
-          </div>
+          <>
+            <nav className="hidden lg:flex items-center gap-1" aria-label="أقسام الصفحة">
+              {LANDING_LINKS.map((link) => {
+                const isActive = link.href === activeSection;
+                return (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    className={`px-3 py-2 rounded-full text-xs font-bold transition-all ${
+                      isActive
+                        ? "bg-emerald-500 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    }`}
+                  >
+                    {link.label}
+                  </a>
+                );
+              })}
+            </nav>
+
+            <div className="flex items-center gap-2.5">
+              <Link
+                href="/login"
+                className="px-4 py-2 rounded-full border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-sm"
+              >
+                تسجيل الدخول
+              </Link>
+              <Link
+                href="/signup"
+                className="lp-btn lp-btn-primary text-xs !py-2.5 !px-5"
+              >
+                ابدأ مجاناً
+              </Link>
+            </div>
+          </>
         ) : (
           <>
             {/* Desktop Navigation */}

@@ -19,6 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
+import FinancialGoalCard from "@/components/FinancialGoalCard";
 
 interface Category {
   id: number;
@@ -357,6 +358,9 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Marketing goal nudge */}
+      <FinancialGoalCard />
 
       {/* Tabs Navigation */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800 scrollbar-none">

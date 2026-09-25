@@ -3,6 +3,8 @@ import { getActiveUserId, getUserById, getUserByEmail } from "@/lib/auth";
 import { requireSupabase } from "@/lib/supabase";
 import { signValue } from "@/lib/cookie-sign";
 import { hashPassword, verifyPassword, isHashedPassword, isWeakPassword } from "@/lib/password";
+import { isRateLimited } from "@/lib/rate-limit";
+import { provisionNewTenant, upsertMarketingLead } from "@/lib/onboarding";
 import { cookies } from "next/headers";
 
 export async function GET() {
@@ -40,6 +42,11 @@ export async function POST(req: NextRequest) {
 
     // 1. LOGIN
     if (action === "login") {
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      if (isRateLimited(`login:${ip}`, 10, 10 * 60 * 1000)) {
+        return NextResponse.json({ error: "محاولات كثيرة جداً. حاول بعد 10 دقائق." }, { status: 429 });
+      }
+
       const { email, password } = body;
       if (!email || !password) {
         return NextResponse.json({ error: "يرجى إدخال البريد الإلكتروني وكلمة المرور" }, { status: 400 });
@@ -89,6 +96,11 @@ export async function POST(req: NextRequest) {
 
     // 2. REGISTER / SIGNUP
     if (action === "register") {
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      if (isRateLimited(`register:${ip}`, 5, 10 * 60 * 1000)) {
+        return NextResponse.json({ error: "محاولات تسجيل كثيرة جداً. حاول بعد 10 دقائق." }, { status: 429 });
+      }
+
       const { name, email, password, phone, plan } = body;
       if (!name || !email || !password) {
         return NextResponse.json({ error: "يرجى تعبئة جميع الحقول الإلزامية" }, { status: 400 });
@@ -135,26 +147,17 @@ export async function POST(req: NextRequest) {
 
       const newUserId = Number((newUser as { id: number }).id);
 
-      // Initialize default accounts for this new tenant
-      const defaultAccounts = ["الكاش", "البنك", "فودافون كاش"];
-      for (const accName of defaultAccounts) {
-        await client.from("accounts").insert({ user_id: newUserId, name: accName, opening_balance: 0 });
-      }
+      // Initialize default accounts + categories for this new tenant
+      await provisionNewTenant(client, newUserId);
 
-      // Initialize default categories for this new tenant
-      const defaultCats = [
-        { name: "طعام ومشروبات", type: "expense", icon: "Utensils" },
-        { name: "مواصلات وبنزين", type: "expense", icon: "Car" },
-        { name: "فواتير والتزامات", type: "expense", icon: "Receipt" },
-        { name: "تسوق ومشتريات", type: "expense", icon: "ShoppingBag" },
-        { name: "صحة وعلاج", type: "expense", icon: "HeartPulse" },
-        { name: "أخرى", type: "expense", icon: "MoreHorizontal" },
-        { name: "مرتب", type: "income", icon: "Briefcase" },
-        { name: "دخل إضافي", type: "income", icon: "Coins" },
-      ];
-      for (const cat of defaultCats) {
-        await client.from("categories").insert({ user_id: newUserId, name: cat.name, type: cat.type, icon: cat.icon });
-      }
+      // Capture for marketing (source = email signup), converted immediately
+      await upsertMarketingLead(client, {
+        email: email.trim().toLowerCase(),
+        name,
+        source: "signup",
+        userId: newUserId,
+        converted: true,
+      }).catch(() => {});
 
       // Auto login
       cookieStore.set("finance_user_id", signValue(String(newUserId)), {
