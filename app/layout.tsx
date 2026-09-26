@@ -1,10 +1,26 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import PwaBoot from "@/components/PwaBoot";
 
 export const metadata: Metadata = {
   title: "صحبي | مساعدك المالي الشخصي",
   description: "قل لصحبي اللي حصل في يومك — يرتب دخلك ومصاريفك والتزاماتك بالعامية المصرية والذكاء الاصطناعي",
+  applicationName: "صحبي",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "صحبي",
+  },
+  icons: {
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icon-192.png", sizes: "180x180", type: "image/png" }],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#090D16",
 };
 
 export default function RootLayout({
@@ -27,6 +43,9 @@ export default function RootLayout({
           <div className="absolute top-[-15%] left-[20%] w-[650px] h-[500px] bg-emerald-500/[0.03] rounded-full blur-[150px]" />
           <div className="absolute top-[-10%] right-[15%] w-[600px] h-[450px] bg-sky-500/[0.02] rounded-full blur-[150px]" />
         </div>
+
+        {/* PWA: service worker registration, install prompt, offline status */}
+        <PwaBoot />
 
         {/* Main Content Area */}
         <div className="relative z-10 flex-1 flex flex-col max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pb-24 md:pb-12 pt-3">

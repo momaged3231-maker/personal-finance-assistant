@@ -30,6 +30,7 @@ export function proxy(request: NextRequest) {
     pathname === "/signup" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    pathname === "/offline" ||
     pathname.startsWith("/google") ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/marketing");
