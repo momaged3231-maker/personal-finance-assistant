@@ -68,11 +68,102 @@ export async function getAiProviderConfig(userId = 1): Promise<AiProviderConfig>
   return { provider, apiKey, baseURL, model };
 }
 
-// Initialize OpenAI-compatible client (works with OpenAI or OpenRouter) if key is set
-async function getOpenAIClient(userId = 1): Promise<OpenAI | null> {
-  const { apiKey, baseURL } = await getAiProviderConfig(userId);
-  if (!apiKey) return null;
-  return new OpenAI({ apiKey, baseURL });
+// A fallback assistant the admin configures: when the primary provider's
+// credits/quota run out, the chain tries these in order.
+export interface FallbackProvider {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+// Resolve the admin settings owner id (AI config lives on the admin row).
+async function getAiConfigOwnerId(userId: number): Promise<number> {
+  const client = requireSupabase();
+  const { data: adminRow } = await client
+    .from("users")
+    .select("id")
+    .eq("is_admin", true)
+    .limit(1)
+    .maybeSingle();
+  return ((adminRow?.id as number | undefined) ?? userId) as number;
+}
+
+// Build the provider chain: primary first, then admin-configured fallbacks.
+// Entries without an API key are skipped.
+export async function getProviderChain(userId = 1): Promise<Array<AiProviderConfig>> {
+  const chain: AiProviderConfig[] = [];
+  const primary = await getAiProviderConfig(userId);
+  if (primary.apiKey) chain.push(primary);
+  try {
+    const settings = await getSettings(await getAiConfigOwnerId(userId));
+    const raw = settings.ai_fallbacks;
+    if (raw) {
+      const parsed = JSON.parse(raw) as FallbackProvider[];
+      for (const fb of Array.isArray(parsed) ? parsed : []) {
+        if (fb && fb.apiKey && fb.baseUrl && fb.model) {
+          if (chain.some((c) => c.apiKey === fb.apiKey && c.model === fb.model)) continue;
+          chain.push({ provider: fb.provider, apiKey: fb.apiKey, baseURL: fb.baseUrl, model: fb.model });
+        }
+      }
+    }
+  } catch {
+    // Malformed fallbacks config — primary only.
+  }
+  return chain;
+}
+
+// Errors meaning "this provider can't serve right now" → try the next one.
+function isProviderFailure(msg: string): boolean {
+  return /401|402|404|429|500|502|503|credits|quota|insufficient|payment|rate.?limit|model.*not found|unknown model|invalid.*key|unauthorized|timeout|aborted|fetch failed|ECONN|ENOTFOUND/i.test(
+    msg
+  );
+}
+
+export interface ChatFallbackResult {
+  content: string;
+  usedProvider: string;
+  usedModel: string;
+  attempts: Array<{ provider: string; model: string; error: string }>;
+}
+
+// Run a chat completion across the provider chain: primary first, then each
+// fallback in order when the previous one fails (credits/quota/rate limit).
+export async function chatWithFallback(opts: {
+  userId: number;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: unknown }>;
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<ChatFallbackResult> {
+  const chain = await getProviderChain(opts.userId);
+  const attempts: ChatFallbackResult["attempts"] = [];
+  for (const cfg of chain) {
+    const openai = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL });
+    const params: Record<string, unknown> = {
+      model: cfg.model,
+      messages: opts.messages,
+      max_tokens: opts.maxTokens ?? 800,
+    };
+    // O-series reasoning models (o1/o3/o4) don't accept temperature
+    if (opts.temperature !== undefined && !/\/?o[134](-|$)/i.test(cfg.model)) {
+      params.temperature = opts.temperature;
+    }
+    try {
+      const completion = await openai.chat.completions.create(params as never);
+      const content = completion.choices[0]?.message?.content || "";
+      return { content, usedProvider: cfg.provider, usedModel: cfg.model, attempts };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      attempts.push({ provider: cfg.provider, model: cfg.model, error: msg.slice(0, 200) });
+      // Whether or not the failure looks retryable, move on to the next
+      // provider in the chain — a dead primary should never block a healthy
+      // fallback.
+    }
+  }
+  const summary = attempts.length
+    ? attempts.map((a) => `${a.provider} (${a.model}): ${a.error}`).join(" | ")
+    : "لا يوجد مزود مهيأ بالإعدادات";
+  throw new Error(`كل المساعدين فشلوا — ${summary}`);
 }
 
 export interface AiMessageRow {
@@ -678,8 +769,7 @@ export function parseActionReply(reply: string, accounts: Account[], fallbackTex
 // ------------------------------------------------------------------
 export async function analyzeReceiptImage(imageDataUrl: string, userId = 1): Promise<AssistantResponse> {
   const config = await getAiProviderConfig(userId);
-  const openai = await getOpenAIClient(userId);
-  if (!openai || !config.apiKey) {
+  if (!config.apiKey) {
     throw new Error("الموديل غير مهيأ — حط API key من الإعدادات الأول");
   }
 
@@ -691,32 +781,31 @@ export async function analyzeReceiptImage(imageDataUrl: string, userId = 1): Pro
     `التصنيف من: طعام ومشروبات / مواصلات وبنزين / فواتير والتزامات / صحة وعلاج / سجائر / تسوق ومشتريات / أخرى.\n` +
     `لو مش قادر تقرا الصورة رجع: ACTION_JSON:{"error":"..."}`;
 
-  const buildChat = () => {
-    const params: Record<string, unknown> = {
-      model: config.model,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: imageDataUrl } },
-          ],
-        },
+  const buildMessages = () => [
+    {
+      role: "user" as const,
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: imageDataUrl } },
       ],
-      max_tokens: 800,
-    };
-    if (!/\/?o[134](-|$)/i.test(config.model)) {
-      params.temperature = 0.1;
-    }
-    return params;
-  };
+    },
+  ];
 
-  // Free routers can be flaky — retry once if the model didn't return an ACTION_JSON
+  // Free routers can be flaky — retry the whole chain once if the model didn't
+  // return an ACTION_JSON
   for (let attempt = 0; attempt < 2; attempt++) {
-    const completion = await openai.chat.completions.create(buildChat() as never);
-    const reply = completion.choices[0]?.message?.content || "";
-    const parsed = parseActionReply(reply, accounts, "قريت الفاتورة، جاهز أسجلها:");
-    if (parsed.action || attempt === 1) return parsed;
+    try {
+      const { content } = await chatWithFallback({
+        userId,
+        messages: buildMessages(),
+        maxTokens: 800,
+        temperature: 0.1,
+      });
+      const parsed = parseActionReply(content, accounts, "قريت الفاتورة، جاهز أسجلها:");
+      if (parsed.action || attempt === 1) return parsed;
+    } catch (error) {
+      if (attempt === 1) throw error;
+    }
   }
   return { text: "قرأت الفاتورة لكن الموديل رجع شكل تاني — جرب تاني أو ارفع صورة أوضح." };
 }
@@ -1555,7 +1644,6 @@ export async function handleLocalEgyptianQuery(userPrompt: string, userId = 1): 
 // Full AI Pipeline: Tries OpenAI first if configured, with rich functions; otherwise falls back smoothly to local Egyptian parser
 export async function processAssistantMessage(userPrompt: string, userId = 1): Promise<AssistantResponse> {
   const config = await getAiProviderConfig(userId);
-  const openai = await getOpenAIClient(userId);
 
   // Persist the user's message so we can keep a conversation memory
   await saveAiMessage(userId, "user", userPrompt);
@@ -1572,7 +1660,7 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 
   let result: AssistantResponse = localResult;
 
-  if (!openai || !config.apiKey) {
+  if (!config.apiKey) {
     // No LLM configured → keep the friendly local reply
   } else {
     try {
@@ -1643,32 +1731,39 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 8. لو سأل «لمحة» أو «برايف» أو «وتيرة الصرف» أو «تنبيهات الميزانية»: استخدم البيانات الموجودة أعلاه (تنبيهات الميزانية / وتيرة الصرف / الفواتير القادمة / الأهداف) ورد بشكل كامل منظم ومفيد.
 9. العادات المتكررة موجودة في سطر «عادات المستخدم المتكررة» — اعتمدها لو اتسألت عن نمط صرفك.`;
 
-      const chatParams: Record<string, unknown> = {
-        model: config.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...mapHistoryToMessages(history),
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 800,
-      };
-      // O-series reasoning models (o1/o3/o4) don't accept temperature
-      if (!/\/?o[134](-|$)/i.test(config.model)) {
-        chatParams.temperature = 0.3;
-      }
-      const completion = await openai.chat.completions.create(chatParams as never);
+      const chatMessages = [
+        { role: "system" as const, content: systemPrompt },
+        ...mapHistoryToMessages(history),
+        { role: "user" as const, content: userPrompt },
+      ];
 
-      const reply = completion.choices[0]?.message?.content || "";
+      // Provider chain: primary first, then admin-configured fallbacks when
+      // the primary's credits/quota run out.
+      const { content, usedProvider, usedModel } = await chatWithFallback({
+        userId,
+        messages: chatMessages,
+        maxTokens: 800,
+        temperature: 0.3,
+      });
 
       // Check for ACTION_JSON (parses both old & new action types)
-      result = parseActionReply(reply, accounts);
-    } catch (error) {
-      console.error("OpenAI call failed, falling back to local Egyptian parser", error);
-      const msg = error instanceof Error ? error.message : "";
-      // Detect low-credit / quota errors so the user knows why the AI isn't reasoning
-      if (/402|credits|quota|insufficient|payment/i.test(msg)) {
+      result = parseActionReply(content, accounts);
+
+      // Transparency: note when a fallback provider served the request.
+      if (usedProvider !== config.provider && result.text) {
         result = {
-          text: `${localResult.text}\n\n⚠️ ملحوظة صغيرة: الموديل اللي راكب — ${config.model} — محتاج إضافة كريدت في حسابك على OpenRouter عشان يرد عليك بذكاء حقيقي. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
+          ...result,
+          text: `${result.text}\n\n🔄 رد عليك عبر ${usedProvider} (${usedModel}) بعد ما المزود الأساسي (${config.provider}) ما قدرش يخدم.`,
+        };
+      }
+    } catch (error) {
+      console.error("All AI providers failed, falling back to local Egyptian parser", error);
+      const msg = error instanceof Error ? error.message : "";
+      // Detect chain-wide failure (credits/quota/bad keys) so the user knows
+      // why the AI isn't reasoning
+      if (/كل المساعدين فشلوا|401|402|credits|quota|insufficient|payment|unauthorized/i.test(msg)) {
+        result = {
+          text: `${localResult.text}\n\n⚠️ ملحوظة صغيرة: كل المساعدين المهيأين خلص كريديتهم أو فيه مشكلة في المفاتيح حالياً. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
         };
       } else {
         result = localResult;

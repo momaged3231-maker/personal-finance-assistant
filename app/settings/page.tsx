@@ -157,6 +157,14 @@ export default function SettingsPage() {
   const [aiModel, setAiModel] = useState("openrouter/auto");
   const [importedModels, setImportedModels] = useState<string[]>([]);
   const [importingModels, setImportingModels] = useState(false);
+  // Fallback assistants: when the primary provider's credits run out, the
+  // assistant tries these in order (stored as JSON in ai_fallbacks).
+  const [fallbacks, setFallbacks] = useState<
+    Array<{ provider: string; baseUrl: string; apiKey: string; model: string }>
+  >([]);
+  const [newFbProvider, setNewFbProvider] = useState("groq");
+  const [newFbKey, setNewFbKey] = useState("");
+  const [newFbModel, setNewFbModel] = useState("");
   const [testingModel, setTestingModel] = useState(false);
   const [testResult, setTestResult] = useState<{
     ok: boolean;
@@ -204,6 +212,19 @@ export default function SettingsPage() {
     if (s.ai_provider) setAiProvider(s.ai_provider);
     if (s.ai_base_url) setAiBaseUrl(s.ai_base_url);
     if (s.ai_model) setAiModel(s.ai_model);
+    if (s.ai_fallbacks) {
+      try {
+        const parsed = JSON.parse(s.ai_fallbacks) as Array<{
+          provider: string;
+          baseUrl: string;
+          apiKey: string;
+          model: string;
+        }>;
+        if (Array.isArray(parsed)) setFallbacks(parsed.filter((f) => f && f.provider && f.baseUrl));
+      } catch {
+        // ignore malformed
+      }
+    }
   }
 
   // Fetch initial settings & data
@@ -357,6 +378,7 @@ export default function SettingsPage() {
         ["ai_provider", aiProvider],
         ["ai_base_url", aiBaseUrl],
         ["ai_model", aiModel],
+        ["ai_fallbacks", JSON.stringify(fallbacks)],
       ];
       if (openAiKey.trim()) pairs.push(["ai_api_key", openAiKey.trim()]);
       for (const [key, value] of pairs) {
@@ -395,6 +417,32 @@ export default function SettingsPage() {
     } finally {
       setImportingModels(false);
     }
+  }
+
+  // Fallback assistants (chain): add / remove
+  function handleAddFallback() {
+    const p = AI_PROVIDERS.find((x) => x.id === newFbProvider);
+    if (!p) return;
+    if (!newFbKey.trim()) {
+      notify("اكتب مفتاح الـ API الخاص بالمساعد الاحتياطي", "error");
+      return;
+    }
+    const model = newFbModel.trim() || p.model;
+    if (fallbacks.some((f) => f.apiKey === newFbKey.trim() && f.model === model)) {
+      notify("المساعد الاحتياطي ده مضاف بالفعل بنفس المفتاح والموديل", "error");
+      return;
+    }
+    setFallbacks([
+      ...fallbacks,
+      { provider: p.id, baseUrl: p.baseUrl, apiKey: newFbKey.trim(), model },
+    ]);
+    setNewFbKey("");
+    setNewFbModel("");
+    notify(`تم إضافة ${p.label} كمساعد احتياطي — اضغط «حفظ إعدادات الذكاء الاصطناعي» لتثبيته`);
+  }
+
+  function handleRemoveFallback(idx: number) {
+    setFallbacks(fallbacks.filter((_, i) => i !== idx));
   }
 
   // Test the currently typed AI config with a real API call
@@ -1028,6 +1076,95 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Fallback Assistants Chain */}
+          <div className="pt-2 border-t border-slate-800">
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-emerald-400" />
+                  المساعدون الاحتياطيون (Fallback Chain)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  لو كريديت المزود الأساسي خلص أو وقف، المساعد يجرب دول تلقائياً بالترتيب — عشان مساعدك ميفضلش شغال دايماً.
+                </p>
+              </div>
+
+              {fallbacks.length > 0 && (
+                <div className="space-y-2">
+                  {fallbacks.map((fb, idx) => {
+                    const p = AI_PROVIDERS.find((x) => x.id === fb.provider);
+                    return (
+                      <div
+                        key={`${fb.provider}-${fb.model}-${idx}`}
+                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-white block">
+                            {idx + 1}. {p?.label || fb.provider} — <span className="font-mono text-[10px] text-slate-400" dir="ltr">{fb.model}</span>
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono break-all" dir="ltr">
+                            {fb.baseUrl} · مفتاح: ••••{fb.apiKey.slice(-4)}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveFallback(idx)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                          title="حذف المساعد الاحتياطي"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add fallback form */}
+              <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                <span className="text-xs font-bold text-slate-300 block">إضافة مساعد احتياطي جديد</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <select
+                    value={newFbProvider}
+                    onChange={(e) => {
+                      setNewFbProvider(e.target.value);
+                      const p = AI_PROVIDERS.find((x) => x.id === e.target.value);
+                      if (p) setNewFbModel(p.model);
+                    }}
+                    className="px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500 cursor-pointer"
+                  >
+                    {AI_PROVIDERS.filter((p) => p.id !== aiProvider).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label} — {p.desc}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="password"
+                    placeholder={`مفتاح ${AI_PROVIDERS.find((p) => p.id === newFbProvider)?.label || ""}...`}
+                    value={newFbKey}
+                    onChange={(e) => setNewFbKey(e.target.value)}
+                    dir="ltr"
+                    className="px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="اسم الموديل (اتركه فارغ للافتراضي)"
+                  value={newFbModel}
+                  onChange={(e) => setNewFbModel(e.target.value)}
+                  dir="ltr"
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  onClick={handleAddFallback}
+                  className="py-2 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs font-bold border border-emerald-500/30 transition-all cursor-pointer"
+                >
+                  + إضافة للمساعدين الاحتياطيين
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-800">
