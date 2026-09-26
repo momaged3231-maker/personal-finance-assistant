@@ -18,10 +18,12 @@ import {
   RefreshCw,
   CheckCircle2,
   Zap,
+  Bell,
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
 import FinancialGoalCard from "@/components/FinancialGoalCard";
 import GoogleAuthButton, { GoogleIcon } from "@/components/GoogleAuthButton";
+import PushToggle from "@/components/PushToggle";
 
 interface Category {
   id: number;
@@ -1310,6 +1312,22 @@ export default function SettingsPage() {
                       <GoogleAuthButton mode="login" returnTo="/settings" />
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* Push notifications */}
+              <div className="pt-4 border-t border-slate-800">
+                <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Bell className="w-4 h-4 text-sky-400" />
+                      إشعارات الفواتير والجمعيات
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      تنبيه يومي على موبايلك لو فيه فاتورة أو قسط جمعية مستحق — من غير فتح التطبيق.
+                    </p>
+                  </div>
+                  <PushToggle />
                 </div>
               </div>
             </>

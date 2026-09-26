@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveUserId, getUserById, getUserByEmail } from "@/lib/auth";
 import { requireSupabase } from "@/lib/supabase";
-import { signValue } from "@/lib/cookie-sign";
+import { signValue, verifyValue } from "@/lib/cookie-sign";
 import { hashPassword, verifyPassword, isHashedPassword, isWeakPassword } from "@/lib/password";
 import { isRateLimited } from "@/lib/rate-limit";
 import { provisionNewTenant, upsertMarketingLead } from "@/lib/onboarding";
@@ -32,6 +32,13 @@ function sanitizeUser(user: Record<string, unknown>) {
   const safe = { ...user };
   delete safe.password;
   return safe;
+}
+
+/** Builds a signed one-time reset URL valid for 2 hours. */
+function createResetUrl(email: string): string {
+  const expiresAt = Date.now() + 2 * 60 * 60 * 1000;
+  const token = signValue(`reset:${email}:${expiresAt}`);
+  return `/reset-password?token=${encodeURIComponent(token)}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -87,6 +94,8 @@ export async function POST(req: NextRequest) {
       cookieStore.set("finance_user_id", signValue(String(user.id)), {
         path: "/",
         httpOnly: true,
+        sameSite: "lax",
+        secure: true,
         maxAge: 60 * 60 * 24 * 30, // 30 days
       });
       cookieStore.delete("finance_impersonate_user_id");
@@ -163,6 +172,8 @@ export async function POST(req: NextRequest) {
       cookieStore.set("finance_user_id", signValue(String(newUserId)), {
         path: "/",
         httpOnly: true,
+        sameSite: "lax",
+        secure: true,
         maxAge: 60 * 60 * 24 * 30,
       });
 
@@ -190,6 +201,8 @@ export async function POST(req: NextRequest) {
       cookieStore.set("finance_impersonate_user_id", signValue(String(targetUser.id)), {
         path: "/",
         httpOnly: true,
+        sameSite: "lax",
+        secure: true,
       });
 
       return NextResponse.json({ success: true, user: sanitizeUser(targetUser as unknown as Record<string, unknown>) });
@@ -205,6 +218,73 @@ export async function POST(req: NextRequest) {
     if (action === "logout") {
       cookieStore.delete("finance_user_id");
       cookieStore.delete("finance_impersonate_user_id");
+      return NextResponse.json({ success: true });
+    }
+
+    // 6. FORGOT PASSWORD — issues a signed, time-limited reset token.
+    //    No mailer is wired yet, so the reset link is returned to the client to show.
+    if (action === "forgot_password") {
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      if (isRateLimited(`forgot:${ip}`, 3, 10 * 60 * 1000)) {
+        return NextResponse.json({ error: "محاولات كثيرة جداً. حاول بعد 10 دقائق." }, { status: 429 });
+      }
+
+      const { email } = body;
+      if (!email || typeof email !== "string" || !email.includes("@")) {
+        return NextResponse.json({ error: "أدخل بريداً إلكترونياً صحيحاً" }, { status: 400 });
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+      const existing = await getUserByEmail(cleanEmail).catch(() => null);
+      const payload = existing ? { resetUrl: createResetUrl(cleanEmail) } : {};
+      // Same response whether or not the account exists (no user enumeration).
+      return NextResponse.json({ success: true, ...payload });
+    }
+
+    // 7. RESET PASSWORD — consumes the signed token to set a new password
+    if (action === "reset_password") {
+      const { token, password } = body;
+      if (!token || typeof token !== "string") {
+        return NextResponse.json({ error: "الرابط غير صالح أو منتهي الصلاحية" }, { status: 400 });
+      }
+      if (!password || isWeakPassword(password)) {
+        return NextResponse.json(
+          { error: "كلمة المرور ضعيفة — لازم 6 حروف على الأقل ومفيش أرقام متتالية سهلة" },
+          { status: 400 }
+        );
+      }
+
+      const raw = verifyValue(token);
+      const parsed = raw?.startsWith("reset:") ? raw : null;
+      if (!parsed) {
+        return NextResponse.json({ error: "الرابط غير صالح أو منتهي الصلاحية" }, { status: 400 });
+      }
+
+      const parts = parsed.split(":");
+      const cleanEmail = parts[1]?.toLowerCase();
+      const expiresAt = Number(parts[2] || 0);
+      if (!cleanEmail || !expiresAt || expiresAt < Date.now()) {
+        return NextResponse.json({ error: "الرابط غير صالح أو منتهي الصلاحية" }, { status: 400 });
+      }
+
+      const user = await getUserByEmail(cleanEmail);
+      if (!user) {
+        return NextResponse.json({ error: "الحساب غير موجود" }, { status: 404 });
+      }
+
+      const client = requireSupabase();
+      const { error } = await client.from("users").update({ password: hashPassword(password) }).eq("id", user.id);
+      if (error) throw error;
+
+      cookieStore.set("finance_user_id", signValue(String(user.id)), {
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        secure: true,
+        maxAge: 60 * 60 * 24 * 30,
+      });
+      cookieStore.delete("finance_impersonate_user_id");
+
       return NextResponse.json({ success: true });
     }
 

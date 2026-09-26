@@ -10,6 +10,7 @@ import {
   ArrowRight,
   AlertCircle,
   Loader2,
+  KeyRound,
 } from "lucide-react";
 import GoogleAuthButton from "@/components/GoogleAuthButton";
 
@@ -19,6 +20,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotDone, setForgotDone] = useState<string | null>(null);
+  const [forgotError, setForgotError] = useState<string | null>(null);
 
   async function handleLogin(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -49,6 +56,29 @@ export default function LoginPage() {
     } catch {
       setError("حدث خطأ أثناء الاتصال بالخادم. يرجى المحاولة لاحقاً.");
       setLoading(false);
+    }
+  }
+
+  async function handleForgot(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError(null);
+    setForgotBusy(true);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "forgot_password", email: forgotEmail }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setForgotDone(data.resetUrl || null);
+      } else {
+        setForgotError(data.error || "حصلت مشكلة - جرب تاني");
+      }
+    } catch {
+      setForgotError("حصلت مشكلة في الاتصال - جرب تاني");
+    } finally {
+      setForgotBusy(false);
     }
   }
 
@@ -110,7 +140,15 @@ export default function LoginPage() {
                 <label className="block text-xs font-semibold text-slate-300">
                   كلمة المرور
                 </label>
-                <span className="text-[11px] text-blue-400/80 hover:text-blue-300 cursor-pointer">
+                <span
+                  onClick={() => {
+                    setShowForgot(true);
+                    setForgotDone(null);
+                    setForgotError(null);
+                    setForgotEmail(email);
+                  }}
+                  className="text-[11px] text-blue-400/80 hover:text-blue-300 cursor-pointer"
+                >
                   نسيت كلمة المرور؟
                 </span>
               </div>
@@ -146,6 +184,63 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {showForgot && (
+            <div className="rounded-xl border border-slate-700/70 bg-slate-950/70 p-4 space-y-3">
+              <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                استعادة كلمة المرور
+              </h3>
+              {forgotDone ? (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    فتح رابط التغيير (صالح لمدة ساعتين). لحد ما يُفعّل المرسل الإلكتروني، الرابط بيظهر هنا:
+                  </p>
+                  <a
+                    href={forgotDone}
+                    className="block rounded-lg bg-blue-500/10 border border-blue-500/30 px-3 py-2 text-[11px] font-bold text-blue-300 break-all text-center hover:bg-blue-500/20 transition"
+                  >
+                    افتح رابط تغيير كلمة المرور
+                  </a>
+                </div>
+              ) : (
+                <form onSubmit={handleForgot} className="space-y-2.5">
+                  <input
+                    type="email"
+                    required
+                    dir="ltr"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 text-left"
+                  />
+                  {forgotError && (
+                    <p className="text-[11px] font-bold text-rose-300">
+                      {forgotError === "محاولات كثيرة جداً. حاول بعد 10 دقائق."
+                        ? forgotError
+                        : "لو الإيميل ده مسجل، هيظهر فيه رابط الاستعادة"}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={forgotBusy}
+                      className="flex-1 rounded-lg bg-blue-600 py-2 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-50 transition"
+                    >
+                      {forgotBusy ? "جارٍ الإرسال..." : "إرسال رابط الاستعادة"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowForgot(false)}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer Links */}

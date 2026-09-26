@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isCurrentUserAdmin } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
+    if (!(await isCurrentUserAdmin())) {
+      return NextResponse.json({ error: "غير مصرح باختبار الموفرات" }, { status: 403 });
+    }
+
     const body = await req.json();
     const { baseUrl, apiKey, model, provider } = body;
 

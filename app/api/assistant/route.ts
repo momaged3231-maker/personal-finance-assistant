@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveUserId } from "@/lib/auth";
+import { isRateLimited } from "@/lib/rate-limit";
 import {
   processAssistantMessage,
   getConversationHistory,
@@ -68,6 +69,10 @@ export async function POST(req: NextRequest) {
         { error: "غير مصرح - يرجى تسجيل الدخول أولاً", unauthenticated: true },
         { status: 401 }
       );
+    }
+
+    if (isRateLimited(`assistant:${userId}`, 30, 60_000)) {
+      return NextResponse.json({ error: "استهلكت كل الرسائل اللي تتكتب في الدقيقة — جرب بعد دقيقة" }, { status: 429 });
     }
 
     const body = await req.json();

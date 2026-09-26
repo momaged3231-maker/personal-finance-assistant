@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveUserId } from "@/lib/auth";
+import { isRateLimited } from "@/lib/rate-limit";
 import {
   getRecurringBills,
   getRecurringBillById,
@@ -62,6 +63,10 @@ export async function POST(req: NextRequest) {
         { error: "غير مصرح - يرجى تسجيل الدخول أولاً", unauthenticated: true },
         { status: 401 }
       );
+    }
+
+    if (isRateLimited(`bills-write:${userId}`, 60, 60_000)) {
+      return NextResponse.json({ error: "عدد عمليات كبير — انتظر دقيقة وحاول تاني" }, { status: 429 });
     }
 
     const body = await req.json();
