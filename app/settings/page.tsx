@@ -30,6 +30,109 @@ interface Category {
   icon?: string;
 }
 
+// Fully-free AI providers (OpenAI-compatible endpoints) + OpenAI as the paid option.
+// Source: github.com/ShaikhWarsi/free-ai-tools#fully-free-providers
+const AI_PROVIDERS: Array<{
+  id: string;
+  label: string;
+  desc: string;
+  baseUrl: string;
+  model: string;
+  keyHint: string;
+  placeholder: string;
+}> = [
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    desc: "29 موديل مجاني — الأشهر والأوسع",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "meta-llama/llama-3.3-70b-instruct:free",
+    keyHint: "انسخ مفتاحك من openrouter.ai/keys (تنسيق sk-or-...). الموديلات المجانية تعمل حتى بدون مفتاح.",
+    placeholder: "sk-or-...",
+  },
+  {
+    id: "groq",
+    label: "Groq",
+    desc: "الأسرع — حتى 14.4K طلب/يوم",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    keyHint: "أنشئ مفتاحك من console.groq.com/keys (مجاني، بدون بطاقة).",
+    placeholder: "gsk_...",
+  },
+  {
+    id: "google",
+    label: "Google AI Studio",
+    desc: "Gemini — حتى 1,500 طلب/يوم",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.0-flash",
+    keyHint: "أنشئ مفتاحك من aistudio.google.com/apikey (مجاني، بدون بطاقة).",
+    placeholder: "AIza...",
+  },
+  {
+    id: "nvidia",
+    label: "NVIDIA NIM",
+    desc: "46+ موديل — 40 طلب/دقيقة",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    model: "meta/llama-3.3-70b-instruct",
+    keyHint: "أنشئ مفتاحك من build.nvidia.com (يتطلب تحقق برقم الهاتف).",
+    placeholder: "nvapi-...",
+  },
+  {
+    id: "mistral",
+    label: "Mistral",
+    desc: "1B توكن/شهر مجاناً",
+    baseUrl: "https://api.mistral.ai/v1",
+    model: "mistral-small-latest",
+    keyHint: "أنشئ مفتاحك من console.mistral.ai (يتطلب موافقة على تدريب البيانات).",
+    placeholder: "مفتاحك...",
+  },
+  {
+    id: "cerebras",
+    label: "Cerebras",
+    desc: "الأسرع عالمياً — 1M توكن/يوم",
+    baseUrl: "https://api.cerebras.ai/v1",
+    model: "llama-3.3-70b",
+    keyHint: "أنشئ مفتاحك من cloud.cerebras.ai (مجاني، بدون بطاقة).",
+    placeholder: "csk-...",
+  },
+  {
+    id: "zai",
+    label: "ZAI (GLM)",
+    desc: "GLM-4.7-Flash مجاني — 200K سياق",
+    baseUrl: "https://api.z.ai/api/paas/v4",
+    model: "glm-4.7-flash",
+    keyHint: "أنشئ مفتاحك من z.ai (ZAI_API_KEY — حصة مجانية كريمة).",
+    placeholder: "مفتاحك...",
+  },
+  {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    desc: "1K RPM — موديلات Qwen",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "Qwen/Qwen2.5-7B-Instruct",
+    keyHint: "أنشئ مفتاحك من cloud.siliconflow.cn (مجاني).",
+    placeholder: "sk-...",
+  },
+  {
+    id: "deepinfra",
+    label: "DeepInfra",
+    desc: "200 طلب متوازٍ مجاناً",
+    baseUrl: "https://api.deepinfra.com/v1/openai",
+    model: "meta-llama/Llama-3.3-70B-Instruct",
+    keyHint: "أنشئ مفتاحك من deepinfra.com (مجاني).",
+    placeholder: "مفتاحك...",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    desc: "المدفوع — GPT-4o/5",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    keyHint: "انسخ مفتاحك من platform.openai.com/api-keys (يتطلب رصيد).",
+    placeholder: "sk-proj-...",
+  },
+];
+
 export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
@@ -49,7 +152,7 @@ export default function SettingsPage() {
   // AI Settings
   const [openAiKey, setOpenAiKey] = useState("");
   const [aiTone, setAiTone] = useState("egyptian");
-  const [aiProvider, setAiProvider] = useState<"openai" | "openrouter">("openrouter");
+  const [aiProvider, setAiProvider] = useState<string>("openrouter");
   const [aiBaseUrl, setAiBaseUrl] = useState("https://openrouter.ai/api/v1");
   const [aiModel, setAiModel] = useState("openrouter/auto");
   const [importedModels, setImportedModels] = useState<string[]>([]);
@@ -84,6 +187,7 @@ export default function SettingsPage() {
   } | null>(null);
   const [googleLinked, setGoogleLinked] = useState(false);
   const [personalSaving, setPersonalSaving] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Apply finance data from API to state
   function applyFinanceData(data: { accounts?: Account[]; categories?: Category[]; settings?: Record<string, string> }) {
@@ -97,7 +201,7 @@ export default function SettingsPage() {
     if (s.currency_symbol) setCurrency(s.currency_symbol);
     if (s.openai_key) setOpenAiKey(s.openai_key);
     if (s.ai_tone) setAiTone(s.ai_tone);
-    if (s.ai_provider === "openai" || s.ai_provider === "openrouter") setAiProvider(s.ai_provider);
+    if (s.ai_provider) setAiProvider(s.ai_provider);
     if (s.ai_base_url) setAiBaseUrl(s.ai_base_url);
     if (s.ai_model) setAiModel(s.ai_model);
   }
@@ -144,14 +248,21 @@ export default function SettingsPage() {
     return () => { active = false; };
   }, [router]);
 
-  // Load personal info + Google linkage
+  // Load personal info + Google linkage + admin flag
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const res = await fetch("/api/personal");
-        if (res.ok && active) {
-          const data = await res.json();
+        const [personalRes, authRes] = await Promise.all([
+          fetch("/api/personal"),
+          fetch("/api/auth"),
+        ]);
+        if (active && authRes.ok) {
+          const authData = await authRes.json();
+          if (active) setIsAdmin(Boolean(authData.user?.is_admin));
+        }
+        if (active && personalRes.ok) {
+          const data = await personalRes.json();
           if (active) {
             setPersonalInfo({
               name: data.user?.name || "",
@@ -264,18 +375,21 @@ export default function SettingsPage() {
     }
   }
 
-  // Import available models from OpenRouter
+  // Import available models from the selected provider (OpenAI-compatible /models)
   async function handleImportModels() {
     setImportingModels(true);
     try {
-      const res = await fetch("https://openrouter.ai/api/v1/models");
-      if (!res.ok) throw new Error("فشل الاتصال بـ OpenRouter");
+      const headers: Record<string, string> = {};
+      if (openAiKey.trim()) headers["Authorization"] = `Bearer ${openAiKey.trim()}`;
+      const res = await fetch(`${aiBaseUrl.replace(/\/+$/, "")}/models`, { headers });
+      if (!res.ok) throw new Error("فشل الاتصال بالمزود — تأكد من الـ Base URL وأن المفتاح صحيح");
       const json = await res.json();
       const ids = (json.data || [])
         .map((m: { id?: string }) => m.id)
         .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+      if (ids.length === 0) throw new Error("المزود لم يرجع أي موديلات — تأكد من المفتاح");
       setImportedModels(ids);
-      notify(`تم استيراد ${ids.length} موديل من OpenRouter!`);
+      notify(`تم استيراد ${ids.length} موديل من ${aiProvider}! اختر من الصندوق.`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "فشل استيراد الموديلات", "error");
     } finally {
@@ -452,7 +566,8 @@ export default function SettingsPage() {
           { id: "finance", label: "الرواتب والعمولات", icon: Coins },
           { id: "accounts", label: "إدارة الحسابات", icon: Wallet },
           { id: "categories", label: "التصنيفات", icon: Tags },
-          { id: "ai", label: "المساعد الذكي", icon: Bot },
+          // AI provider settings are admin-only
+          ...(isAdmin ? [{ id: "ai", label: "المساعد الذكي", icon: Bot }] : []),
           { id: "personal", label: "المعلومات الشخصية", icon: User },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -759,37 +874,36 @@ export default function SettingsPage() {
             إعدادات الذكاء الاصطناعي والمحادثة
           </h2>
 
-          {/* Provider Selector */}
+          {/* Provider Cards */}
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-2">
-              مزود الذكاء الاصطناعي (Provider)
+              مزود الذكاء الاصطناعي (Provider) — اختر من الكروت
             </label>
-            <div className="grid grid-cols-2 gap-2 max-w-md">
-              {[
-                { id: "openrouter", label: "راوتر OpenRouter", desc: "OpenRouter.ai" },
-                { id: "openai", label: "أوبن إيه آي OpenAI", desc: "OpenAI" },
-              ].map((p) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {AI_PROVIDERS.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => {
-                    setAiProvider(p.id as "openai" | "openrouter");
-                    setAiBaseUrl(
-                      p.id === "openrouter"
-                        ? "https://openrouter.ai/api/v1"
-                        : "https://api.openai.com/v1"
-                    );
-                    setAiModel(
-                      p.id === "openrouter" ? "openrouter/auto" : "gpt-4o-mini"
-                    );
+                    setAiProvider(p.id);
+                    setAiBaseUrl(p.baseUrl);
+                    setAiModel(p.model);
                   }}
-                  className={`p-3 rounded-xl border text-start transition-all ${
+                  className={`p-3.5 rounded-2xl border text-start transition-all cursor-pointer ${
                     aiProvider === p.id
-                      ? "bg-indigo-600/20 border-indigo-500 text-white"
+                      ? "bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-600/20"
                       : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
                   }`}
                 >
-                  <span className="block text-sm font-extrabold">{p.label}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-extrabold">{p.label}</span>
+                    {aiProvider === p.id && (
+                      <CheckCircle2 className="w-4 h-4 text-indigo-300 shrink-0" />
+                    )}
+                  </div>
                   <span className="block text-[11px] opacity-70 mt-0.5">{p.desc}</span>
+                  <span className="block text-[10px] opacity-50 mt-1 font-mono break-all" dir="ltr">
+                    {p.baseUrl}
+                  </span>
                 </button>
               ))}
             </div>
@@ -801,13 +915,12 @@ export default function SettingsPage() {
               مفتاح API Key (اختياري)
             </label>
             <p className="text-[11px] text-slate-400 mb-2">
-              {aiProvider === "openrouter"
-                ? "انسخ مفتاحك من openrouter.ai/keys (تنسيق sk-or-...). المساعد يعمل محلياً حتى بدون المفتاح."
-                : "المساعد المالي يعمل بكفاءة محلياً حتى بدون المفتاح. لو أردت ذكاء متقدم، ضع مفتاحك هنا."}
+              {AI_PROVIDERS.find((p) => p.id === aiProvider)?.keyHint ||
+                "المساعد المالي يعمل بكفاءة محلياً حتى بدون المفتاح."}
             </p>
             <input
               type="password"
-              placeholder={aiProvider === "openrouter" ? "sk-or-..." : "sk-proj-..."}
+              placeholder={AI_PROVIDERS.find((p) => p.id === aiProvider)?.placeholder || "مفتاحك..."}
               value={openAiKey}
               onChange={(e) => setOpenAiKey(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
@@ -832,61 +945,45 @@ export default function SettingsPage() {
             <label className="block text-xs font-bold text-slate-300 mb-1">
               اسم الموديل (Model)
             </label>
-            <input
-              type="text"
-              list="ai-model-list"
-              placeholder="اكتب اسم الموديل يدوياً أو اختر من القائمة..."
-              value={aiModel}
-              onChange={(e) => setAiModel(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-            />
-            <datalist id="ai-model-list">
-              {(importedModels.length > 0
-                ? importedModels
-                : [
-                    "openrouter/auto",
-                    "openai/gpt-4o-mini",
-                    "openai/gpt-4o",
-                    "anthropic/claude-3.5-sonnet",
-                    "google/gemini-flash-1.5",
-                    "meta-llama/llama-3.3-70b-instruct",
-                  ]
-              ).map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
+            {importedModels.length > 0 ? (
+              <select
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                {aiModel && !importedModels.includes(aiModel) && (
+                  <option value={aiModel}>{aiModel} (الحالي)</option>
+                )}
+                {importedModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="اكتب اسم الموديل يدوياً أو استورده بالزر..."
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              />
+            )}
             <p className="text-[11px] text-slate-400 mt-1.5">
-              ممكن تكتب اسم الموديل يدوياً (مثلاً: openai/gpt-4o-mini) أو تستورد كل الموديلات المتاحة من OpenRouter بالزر ده.
+              اضغط «استيراد الموديلات» لجلب كل الموديلات المتاحة من {aiProvider} — هتظهر في الصندوق فوق واختر بينهم.
             </p>
             <button
               onClick={handleImportModels}
               disabled={importingModels}
-              className="mt-2 py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition"
+              className="mt-2 py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer"
             >
               {importingModels ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="w-3.5 h-3.5" />
               )}
-              {importingModels ? "جاري الاستيراد..." : "استيراد كل موديلات OpenRouter"}
+              {importingModels ? "جاري الاستيراد..." : "استيراد الموديلات"}
             </button>
-            {importedModels.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                {importedModels.map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setAiModel(m)}
-                    className={`text-[10px] px-2 py-1 rounded-lg border transition ${
-                      aiModel === m
-                        ? "bg-indigo-600/30 border-indigo-500 text-indigo-200"
-                        : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            )}
 
             {/* Test Model Connection */}
             <div className="mt-3 flex flex-wrap items-center gap-2">

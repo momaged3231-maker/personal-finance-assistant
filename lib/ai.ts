@@ -33,16 +33,26 @@ import {
 export type { ParsedAction, ParsedActionType, AssistantResponse, Account };
 
 export interface AiProviderConfig {
-  provider: "openai" | "openrouter";
+  provider: string;
   apiKey: string;
   baseURL?: string;
   model: string;
 }
 
-// Read AI provider config from user settings (with env fallbacks)
+// AI provider settings are admin-only: the config is resolved from the admin
+// user's settings so every client's assistant uses the system-wide provider.
+// Falls back to the requesting user's own settings, then env keys, then defaults.
 export async function getAiProviderConfig(userId = 1): Promise<AiProviderConfig> {
-  const settings = await getSettings(userId);
-  const provider = (settings.ai_provider || "openai") as AiProviderConfig["provider"];
+  const client = requireSupabase();
+  const { data: adminRow } = await client
+    .from("users")
+    .select("id")
+    .eq("is_admin", true)
+    .limit(1)
+    .maybeSingle();
+  const configOwnerId = ((adminRow?.id as number | undefined) ?? userId) as number;
+  const settings = await getSettings(configOwnerId);
+  const provider = settings.ai_provider || "openai";
   const apiKey =
     settings.ai_api_key ||
     settings.openai_key ||
