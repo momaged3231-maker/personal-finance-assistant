@@ -65,8 +65,11 @@ function GoogleCallbackInner() {
 
         if (!cancelled) {
           setStage("done");
+          // Only allow internal paths for the post-login redirect.
+          const to = url.searchParams.get("to");
+          const target = to && to.startsWith("/") && !to.startsWith("//") ? to : "/";
           window.setTimeout(() => {
-            window.location.href = "/";
+            window.location.href = target;
           }, 700);
         }
       } catch (err) {

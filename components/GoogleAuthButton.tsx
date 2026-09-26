@@ -30,9 +30,11 @@ export function GoogleIcon({ className = "w-4 h-4" }: { className?: string }) {
 export default function GoogleAuthButton({
   mode,
   plan,
+  returnTo,
 }: {
   mode: "login" | "signup";
   plan?: string;
+  returnTo?: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +50,7 @@ export default function GoogleAuthButton({
     try {
       const redirectTo = `${window.location.origin}/google/callback${
         plan ? `?plan=${encodeURIComponent(plan)}` : ""
-      }`;
+      }${returnTo ? `${plan ? "&" : "?"}to=${encodeURIComponent(returnTo)}` : ""}`;
       const { error: oauthErr } = await sb.auth.signInWithOAuth({
         provider: "google",
         options: { redirectTo },

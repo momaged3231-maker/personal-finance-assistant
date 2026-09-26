@@ -8,6 +8,7 @@ import {
   Wallet,
   Tags,
   Bot,
+  User,
   Check,
   Plus,
   Trash2,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
 import FinancialGoalCard from "@/components/FinancialGoalCard";
+import GoogleAuthButton, { GoogleIcon } from "@/components/GoogleAuthButton";
 
 interface Category {
   id: number;
@@ -31,7 +33,7 @@ interface Category {
 export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    "finance" | "accounts" | "categories" | "ai"
+    "finance" | "accounts" | "categories" | "ai" | "personal"
   >("finance");
 
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,18 @@ export default function SettingsPage() {
   // New category form
   const [newCatName, setNewCatName] = useState("");
   const [newCatType, setNewCatType] = useState<"expense" | "income">("expense");
+
+  // Personal info
+  const [personalInfo, setPersonalInfo] = useState<{
+    name: string;
+    email: string;
+    phone: string;
+    plan: string;
+    status: string;
+    created_at: string;
+  } | null>(null);
+  const [googleLinked, setGoogleLinked] = useState(false);
+  const [personalSaving, setPersonalSaving] = useState(false);
 
   // Apply finance data from API to state
   function applyFinanceData(data: { accounts?: Account[]; categories?: Category[]; settings?: Record<string, string> }) {
@@ -130,6 +144,33 @@ export default function SettingsPage() {
     return () => { active = false; };
   }, [router]);
 
+  // Load personal info + Google linkage
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/personal");
+        if (res.ok && active) {
+          const data = await res.json();
+          if (active) {
+            setPersonalInfo({
+              name: data.user?.name || "",
+              email: data.user?.email || "",
+              phone: data.user?.phone || "",
+              plan: data.user?.plan || "",
+              status: data.user?.status || "",
+              created_at: data.user?.created_at || "",
+            });
+            setGoogleLinked(Boolean(data.googleLinked));
+          }
+        }
+      } catch {
+        // ignore — tab shows fallback
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
   function notify(text: string, type: "success" | "error" = "success") {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 3500);
@@ -151,6 +192,49 @@ export default function SettingsPage() {
       notify("حدث خطأ أثناء الحفظ", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Save personal info (name / phone)
+  async function handleSavePersonal(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const elements = e.currentTarget.elements as HTMLFormControlsCollection;
+    const nameInput = elements.namedItem("personal_name") as HTMLInputElement | null;
+    const phoneInput = elements.namedItem("personal_phone") as HTMLInputElement | null;
+    if (!nameInput?.value.trim()) {
+      notify("الاسم مطلوب", "error");
+      return;
+    }
+    setPersonalSaving(true);
+    try {
+      const res = await fetch("/api/personal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          phone: phoneInput?.value.trim() || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "فشل الحفظ");
+      notify("تم حفظ معلوماتك الشخصية بنجاح!");
+      const refresh = await fetch("/api/personal");
+      if (refresh.ok) {
+        const fresh = await refresh.json();
+        setPersonalInfo({
+          name: fresh.user?.name || "",
+          email: fresh.user?.email || "",
+          phone: fresh.user?.phone || "",
+          plan: fresh.user?.plan || "",
+          status: fresh.user?.status || "",
+          created_at: fresh.user?.created_at || "",
+        });
+        setGoogleLinked(Boolean(fresh.googleLinked));
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "فشل الحفظ", "error");
+    } finally {
+      setPersonalSaving(false);
     }
   }
 
@@ -369,6 +453,7 @@ export default function SettingsPage() {
           { id: "accounts", label: "إدارة الحسابات", icon: Wallet },
           { id: "categories", label: "التصنيفات", icon: Tags },
           { id: "ai", label: "المساعد الذكي", icon: Bot },
+          { id: "personal", label: "المعلومات الشخصية", icon: User },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -884,6 +969,117 @@ export default function SettingsPage() {
             <Check className="w-4 h-4" />
             حفظ إعدادات الذكاء الاصطناعي
           </button>
+        </div>
+      )}
+
+      {/* TAB 6: PERSONAL INFO */}
+      {activeTab === "personal" && (
+        <div className="glass-card p-6 rounded-3xl space-y-6">
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <User className="w-5 h-5 text-sky-400" />
+            معلوماتك الشخصية
+          </h2>
+
+          {!personalInfo ? (
+            <p className="text-xs text-slate-400">تعذر تحميل المعلومات الشخصية. حاول تحديث الصفحة.</p>
+          ) : (
+            <>
+              {/* Read-only profile data */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-400 block mb-1">البريد الإلكتروني</span>
+                  <span className="text-sm font-bold text-white break-all" dir="ltr">{personalInfo.email}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-400 block mb-1">الخطة الحالية</span>
+                  <span className="text-sm font-bold text-white">{personalInfo.plan}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-400 block mb-1">حالة الحساب</span>
+                  <span className="text-sm font-bold text-emerald-400">{personalInfo.status}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-400 block mb-1">تاريخ الانضمام</span>
+                  <span className="text-sm font-bold text-white" dir="ltr">
+                    {personalInfo.created_at
+                      ? new Date(personalInfo.created_at).toLocaleDateString("ar-EG")
+                      : "—"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Editable form — saved to Supabase */}
+              <form
+                key={`${personalInfo.name}-${personalInfo.phone}`}
+                onSubmit={handleSavePersonal}
+                className="pt-4 border-t border-slate-800 space-y-3"
+              >
+                <h3 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-sky-400" />
+                  تعديل بياناتك (تُحفظ في قواعد البيانات على Supabase)
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    name="personal_name"
+                    required
+                    defaultValue={personalInfo.name}
+                    placeholder="الاسم الكامل"
+                    className="px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500"
+                  />
+                  <input
+                    type="tel"
+                    name="personal_phone"
+                    defaultValue={personalInfo.phone}
+                    placeholder="رقم الهاتف (اختياري)"
+                    dir="ltr"
+                    className="px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={personalSaving}
+                  className="py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-600/20 transition-all"
+                >
+                  {personalSaving ? "جارٍ الحفظ..." : "حفظ المعلومات الشخصية"}
+                </button>
+              </form>
+
+              {/* Google linkage */}
+              <div className="pt-4 border-t border-slate-800">
+                <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <GoogleIcon className="w-4 h-4" />
+                    ربط حسابي بجوجل
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {googleLinked
+                      ? "حسابك مرتبط بجوجل — بياناتك محفوظة ومتزامنة في قواعد البيانات لدينا على Supabase."
+                      : "اربط حسابك بجوجل لحفظ بياناتك المعلوماتية والاستفادة من الدخول السريع بنقرة واحدة."}
+                  </p>
+                  <div
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold ${
+                      googleLinked
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                        : "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                    }`}
+                  >
+                    {googleLinked ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                    )}
+                    {googleLinked ? "مرتبط بجوجل" : "غير مرتبط بعد"}
+                  </div>
+                  {!googleLinked && (
+                    <div className="max-w-xs pt-1">
+                      <GoogleAuthButton mode="login" returnTo="/settings" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

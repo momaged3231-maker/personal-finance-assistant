@@ -125,6 +125,18 @@ export async function POST(req: NextRequest) {
     });
     cookieStore.delete("finance_impersonate_user_id");
 
+    // Persist the Google linkage so the personal-info tab can show it.
+    try {
+      await client
+        .from("settings")
+        .upsert(
+          { user_id: user.id, key: "google_linked", value: "1" },
+          { onConflict: "user_id,key" }
+        );
+    } catch {
+      // non-fatal
+    }
+
     const safe: Record<string, unknown> = { ...user };
     delete safe.password;
     return NextResponse.json({ success: true, user: safe });
