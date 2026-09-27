@@ -55,6 +55,7 @@ export async function getAiProviderConfig(userId = 1): Promise<AiProviderConfig>
   const settings = await getSettings(configOwnerId);
   const provider = settings.ai_provider || "openai";
   const apiKey =
+    settings[`ai_key_${provider}`] ||
     settings.ai_api_key ||
     settings.openai_key ||
     (provider === "openrouter" ? process.env.OPENROUTER_API_KEY : "") ||

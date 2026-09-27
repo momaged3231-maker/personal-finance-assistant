@@ -15,15 +15,15 @@ import {
   AlertTriangle,
   Loader2,
   Calculator,
-  RefreshCw,
-  CheckCircle2,
-  Zap,
+  Server,
   Bell,
 } from "lucide-react";
 import { formatEgp, Account } from "@/lib/types";
+import { AI_PROVIDERS } from "@/lib/providers";
 import FinancialGoalCard from "@/components/FinancialGoalCard";
 import GoogleAuthButton, { GoogleIcon } from "@/components/GoogleAuthButton";
 import PushToggle from "@/components/PushToggle";
+import ProvidersTab from "@/components/ProvidersTab";
 
 interface Category {
   id: number;
@@ -32,113 +32,10 @@ interface Category {
   icon?: string;
 }
 
-// Fully-free AI providers (OpenAI-compatible endpoints) + OpenAI as the paid option.
-// Source: github.com/ShaikhWarsi/free-ai-tools#fully-free-providers
-const AI_PROVIDERS: Array<{
-  id: string;
-  label: string;
-  desc: string;
-  baseUrl: string;
-  model: string;
-  keyHint: string;
-  placeholder: string;
-}> = [
-  {
-    id: "openrouter",
-    label: "OpenRouter",
-    desc: "29 موديل مجاني — الأشهر والأوسع",
-    baseUrl: "https://openrouter.ai/api/v1",
-    model: "meta-llama/llama-3.3-70b-instruct:free",
-    keyHint: "انسخ مفتاحك من openrouter.ai/keys (تنسيق sk-or-...). الموديلات المجانية تعمل حتى بدون مفتاح.",
-    placeholder: "sk-or-...",
-  },
-  {
-    id: "groq",
-    label: "Groq",
-    desc: "الأسرع — حتى 14.4K طلب/يوم",
-    baseUrl: "https://api.groq.com/openai/v1",
-    model: "llama-3.3-70b-versatile",
-    keyHint: "أنشئ مفتاحك من console.groq.com/keys (مجاني، بدون بطاقة).",
-    placeholder: "gsk_...",
-  },
-  {
-    id: "google",
-    label: "Google AI Studio",
-    desc: "Gemini — حتى 1,500 طلب/يوم",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-2.0-flash",
-    keyHint: "أنشئ مفتاحك من aistudio.google.com/apikey (مجاني، بدون بطاقة).",
-    placeholder: "AIza...",
-  },
-  {
-    id: "nvidia",
-    label: "NVIDIA NIM",
-    desc: "46+ موديل — 40 طلب/دقيقة",
-    baseUrl: "https://integrate.api.nvidia.com/v1",
-    model: "meta/llama-3.3-70b-instruct",
-    keyHint: "أنشئ مفتاحك من build.nvidia.com (يتطلب تحقق برقم الهاتف).",
-    placeholder: "nvapi-...",
-  },
-  {
-    id: "mistral",
-    label: "Mistral",
-    desc: "1B توكن/شهر مجاناً",
-    baseUrl: "https://api.mistral.ai/v1",
-    model: "mistral-small-latest",
-    keyHint: "أنشئ مفتاحك من console.mistral.ai (يتطلب موافقة على تدريب البيانات).",
-    placeholder: "مفتاحك...",
-  },
-  {
-    id: "cerebras",
-    label: "Cerebras",
-    desc: "الأسرع عالمياً — 1M توكن/يوم",
-    baseUrl: "https://api.cerebras.ai/v1",
-    model: "llama-3.3-70b",
-    keyHint: "أنشئ مفتاحك من cloud.cerebras.ai (مجاني، بدون بطاقة).",
-    placeholder: "csk-...",
-  },
-  {
-    id: "zai",
-    label: "ZAI (GLM)",
-    desc: "GLM-4.7-Flash مجاني — 200K سياق",
-    baseUrl: "https://api.z.ai/api/paas/v4",
-    model: "glm-4.7-flash",
-    keyHint: "أنشئ مفتاحك من z.ai (ZAI_API_KEY — حصة مجانية كريمة).",
-    placeholder: "مفتاحك...",
-  },
-  {
-    id: "siliconflow",
-    label: "SiliconFlow",
-    desc: "1K RPM — موديلات Qwen",
-    baseUrl: "https://api.siliconflow.cn/v1",
-    model: "Qwen/Qwen2.5-7B-Instruct",
-    keyHint: "أنشئ مفتاحك من cloud.siliconflow.cn (مجاني).",
-    placeholder: "sk-...",
-  },
-  {
-    id: "deepinfra",
-    label: "DeepInfra",
-    desc: "200 طلب متوازٍ مجاناً",
-    baseUrl: "https://api.deepinfra.com/v1/openai",
-    model: "meta-llama/Llama-3.3-70B-Instruct",
-    keyHint: "أنشئ مفتاحك من deepinfra.com (مجاني).",
-    placeholder: "مفتاحك...",
-  },
-  {
-    id: "openai",
-    label: "OpenAI",
-    desc: "المدفوع — GPT-4o/5",
-    baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4o-mini",
-    keyHint: "انسخ مفتاحك من platform.openai.com/api-keys (يتطلب رصيد).",
-    placeholder: "sk-proj-...",
-  },
-];
-
 export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
-    "finance" | "accounts" | "categories" | "ai" | "personal"
+    "finance" | "accounts" | "categories" | "ai" | "providers" | "personal"
   >("finance");
 
   const [loading, setLoading] = useState(true);
@@ -151,22 +48,12 @@ export default function SettingsPage() {
   const [userCut, setUserCut] = useState("50");
   const [currency, setCurrency] = useState("ج.م");
 
-  // AI Settings
-  const [openAiKey, setOpenAiKey] = useState("");
+  // AI Settings (summary — provider editing lives in the Providers tab)
   const [aiTone, setAiTone] = useState("egyptian");
   const [aiProvider, setAiProvider] = useState<string>("openrouter");
-  const [aiBaseUrl, setAiBaseUrl] = useState("https://openrouter.ai/api/v1");
-  const [aiModel, setAiModel] = useState("openrouter/auto");
-  const [importedModels, setImportedModels] = useState<string[]>([]);
-  const [importingModels, setImportingModels] = useState(false);
-  // Fallback assistants: when the primary provider's credits run out, the
-  // assistant tries these in order (stored as JSON in ai_fallbacks).
   const [fallbacks, setFallbacks] = useState<
     Array<{ provider: string; baseUrl: string; apiKey: string; model: string }>
   >([]);
-  const [newFbProvider, setNewFbProvider] = useState("groq");
-  const [newFbKey, setNewFbKey] = useState("");
-  const [newFbModel, setNewFbModel] = useState("");
 
   // Assistant persona (admin-wide): name + custom instructions
   const [assistantName, setAssistantName] = useState("صحبي");
@@ -183,12 +70,6 @@ export default function SettingsPage() {
   // Per-user memory notes (what the assistant knows about THIS user)
   const [memoryNotes, setMemoryNotes] = useState("");
   const [memorySaving, setMemorySaving] = useState(false);
-  const [testingModel, setTestingModel] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    ok: boolean;
-    message: string;
-    detail?: string;
-  } | null>(null);
 
   // Accounts & Categories
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -225,11 +106,8 @@ export default function SettingsPage() {
     if (s.maintenance_shop_cut) setShopCut(s.maintenance_shop_cut);
     if (s.maintenance_user_cut) setUserCut(s.maintenance_user_cut);
     if (s.currency_symbol) setCurrency(s.currency_symbol);
-    if (s.openai_key) setOpenAiKey(s.openai_key);
     if (s.ai_tone) setAiTone(s.ai_tone);
     if (s.ai_provider) setAiProvider(s.ai_provider);
-    if (s.ai_base_url) setAiBaseUrl(s.ai_base_url);
-    if (s.ai_model) setAiModel(s.ai_model);
     if (s.ai_fallbacks) {
       try {
         const parsed = JSON.parse(s.ai_fallbacks) as Array<{
@@ -329,6 +207,40 @@ export default function SettingsPage() {
     setTimeout(() => setMessage(null), 3500);
   }
 
+  // Refresh the AI summary (primary + chain) whenever its tab opens
+  useEffect(() => {
+    if (activeTab !== "ai") return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/finance");
+        if (res.ok && active) {
+          const data = await res.json();
+          const s: Record<string, string> = data.settings || {};
+          if (s.ai_provider && active) setAiProvider(s.ai_provider);
+          if (s.ai_fallbacks && active) {
+            try {
+              const parsed = JSON.parse(s.ai_fallbacks) as Array<{
+                provider: string;
+                baseUrl: string;
+                apiKey: string;
+                model: string;
+              }>;
+              if (Array.isArray(parsed)) setFallbacks(parsed.filter((f) => f && f.provider && f.baseUrl));
+            } catch {
+              // ignore malformed
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [activeTab]);
+
   // Save setting key/value
   async function handleSaveSetting(key: string, value: string, successMsg?: string) {
     setSaving(true);
@@ -391,55 +303,6 @@ export default function SettingsPage() {
     }
   }
 
-  // Save all AI provider settings
-  async function handleSaveAiSettings() {
-    setSaving(true);
-    try {
-      const pairs: Array<[string, string]> = [
-        ["ai_provider", aiProvider],
-        ["ai_base_url", aiBaseUrl],
-        ["ai_model", aiModel],
-        ["ai_fallbacks", JSON.stringify(fallbacks)],
-      ];
-      if (openAiKey.trim()) pairs.push(["ai_api_key", openAiKey.trim()]);
-      for (const [key, value] of pairs) {
-        const res = await fetch("/api/finance", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "update_setting", key, value }),
-        });
-        if (!res.ok) throw new Error("فشل حفظ أحد الإعدادات");
-      }
-      notify("تم حفظ إعدادات مزود الذكاء الاصطناعي بنجاح!");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "حدث خطأ أثناء الحفظ", "error");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Import available models from the selected provider (OpenAI-compatible /models)
-  async function handleImportModels() {
-    setImportingModels(true);
-    try {
-      const headers: Record<string, string> = {};
-      if (openAiKey.trim()) headers["Authorization"] = `Bearer ${openAiKey.trim()}`;
-      const res = await fetch(`${aiBaseUrl.replace(/\/+$/, "")}/models`, { headers });
-      if (!res.ok) throw new Error("فشل الاتصال بالمزود — تأكد من الـ Base URL وأن المفتاح صحيح");
-      const json = await res.json();
-      const ids = (json.data || [])
-        .map((m: { id?: string }) => m.id)
-        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
-      if (ids.length === 0) throw new Error("المزود لم يرجع أي موديلات — تأكد من المفتاح");
-      setImportedModels(ids);
-      notify(`تم استيراد ${ids.length} موديل من ${aiProvider}! اختر من الصندوق.`);
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "فشل استيراد الموديلات", "error");
-    } finally {
-      setImportingModels(false);
-    }
-  }
-
   // Load knowledge base docs (admin only)
   useEffect(() => {
     if (!isAdmin) return;
@@ -457,32 +320,6 @@ export default function SettingsPage() {
     })();
     return () => { active = false; };
   }, [isAdmin]);
-
-  // Fallback assistants (chain): add / remove
-  function handleAddFallback() {
-    const p = AI_PROVIDERS.find((x) => x.id === newFbProvider);
-    if (!p) return;
-    if (!newFbKey.trim()) {
-      notify("اكتب مفتاح الـ API الخاص بالمساعد الاحتياطي", "error");
-      return;
-    }
-    const model = newFbModel.trim() || p.model;
-    if (fallbacks.some((f) => f.apiKey === newFbKey.trim() && f.model === model)) {
-      notify("المساعد الاحتياطي ده مضاف بالفعل بنفس المفتاح والموديل", "error");
-      return;
-    }
-    setFallbacks([
-      ...fallbacks,
-      { provider: p.id, baseUrl: p.baseUrl, apiKey: newFbKey.trim(), model },
-    ]);
-    setNewFbKey("");
-    setNewFbModel("");
-    notify(`تم إضافة ${p.label} كمساعد احتياطي — اضغط «حفظ إعدادات الذكاء الاصطناعي» لتثبيته`);
-  }
-
-  function handleRemoveFallback(idx: number) {
-    setFallbacks(fallbacks.filter((_, i) => i !== idx));
-  }
 
   // Knowledge base (admin): save a doc + delete
   async function handleSaveKnowledgeDoc() {
@@ -548,43 +385,6 @@ export default function SettingsPage() {
       notify("حدث خطأ أثناء الحفظ", "error");
     } finally {
       setMemorySaving(false);
-    }
-  }
-
-  // Test the currently typed AI config with a real API call
-  async function handleTestModel() {
-    if (!openAiKey.trim()) {
-      setTestResult({ ok: false, message: "اكتب مفتاح API الأول عشان نقدر نختبر الموديل." });
-      return;
-    }
-    if (!aiModel.trim()) {
-      setTestResult({ ok: false, message: "اكتب اسم الموديل الأول." });
-      return;
-    }
-
-    setTestingModel(true);
-    setTestResult(null);
-    try {
-      const res = await fetch("/api/ai/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: aiProvider,
-          baseUrl: aiBaseUrl,
-          apiKey: openAiKey,
-          model: aiModel,
-        }),
-      });
-      const json = await res.json();
-      setTestResult({
-        ok: Boolean(json.ok),
-        message: json.message || "انتهى الاختبار",
-        detail: json.detail,
-      });
-    } catch {
-      setTestResult({ ok: false, message: "حصل خطأ أثناء محاولة الاختبار." });
-    } finally {
-      setTestingModel(false);
     }
   }
 
@@ -721,7 +521,12 @@ export default function SettingsPage() {
           { id: "accounts", label: "إدارة الحسابات", icon: Wallet },
           { id: "categories", label: "التصنيفات", icon: Tags },
           // AI provider settings are admin-only
-          ...(isAdmin ? [{ id: "ai", label: "المساعد الذكي", icon: Bot }] : []),
+          ...(isAdmin
+            ? [
+                { id: "ai", label: "المساعد الذكي", icon: Bot },
+                { id: "providers", label: "المزودين", icon: Server },
+              ]
+            : []),
           { id: "personal", label: "المعلومات الشخصية", icon: User },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1028,256 +833,34 @@ export default function SettingsPage() {
             إعدادات الذكاء الاصطناعي والمحادثة
           </h2>
 
-          {/* Provider Cards — compact */}
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-2">
-              مزود الذكاء الاصطناعي (Provider)
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-              {AI_PROVIDERS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    setAiProvider(p.id);
-                    setAiBaseUrl(p.baseUrl);
-                    setAiModel(p.model);
-                  }}
-                  className={`px-2.5 py-2 rounded-xl border text-start transition-all cursor-pointer ${
-                    aiProvider === p.id
-                      ? "bg-indigo-600/20 border-indigo-500 text-white"
-                      : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[13px] font-extrabold truncate">{p.label}</span>
-                    {aiProvider === p.id && (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
-                    )}
-                  </div>
-                  <span className="block text-[10px] opacity-70 mt-0.5 truncate">{p.desc}</span>
-                  {aiProvider === p.id && (
-                    <span className="block text-[9px] opacity-50 mt-0.5 font-mono truncate" dir="ltr">
-                      {p.baseUrl}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* API Key */}
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              مفتاح API Key (اختياري)
-            </label>
-            <p className="text-[11px] text-slate-400 mb-2">
-              {AI_PROVIDERS.find((p) => p.id === aiProvider)?.keyHint ||
-                "المساعد المالي يعمل بكفاءة محلياً حتى بدون المفتاح."}
-            </p>
-            <input
-              type="password"
-              placeholder={AI_PROVIDERS.find((p) => p.id === aiProvider)?.placeholder || "مفتاحك..."}
-              value={openAiKey}
-              onChange={(e) => setOpenAiKey(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-
-          {/* Base URL */}
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              رابط الإصدار API (Base URL)
-            </label>
-            <input
-              type="text"
-              value={aiBaseUrl}
-              onChange={(e) => setAiBaseUrl(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-
-          {/* Model */}
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              اسم الموديل (Model)
-            </label>
-            {importedModels.length > 0 ? (
-              <select
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500 cursor-pointer"
-              >
-                {aiModel && !importedModels.includes(aiModel) && (
-                  <option value={aiModel}>{aiModel} (الحالي)</option>
-                )}
-                {importedModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                placeholder="اكتب اسم الموديل يدوياً أو استورده بالزر..."
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-              />
-            )}
-            <p className="text-[11px] text-slate-400 mt-1.5">
-              اضغط «استيراد الموديلات» لجلب كل الموديلات المتاحة من {aiProvider} — هتظهر في الصندوق فوق واختر بينهم.
-            </p>
-            <button
-              onClick={handleImportModels}
-              disabled={importingModels}
-              className="mt-2 py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer"
-            >
-              {importingModels ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5" />
-              )}
-              {importingModels ? "جاري الاستيراد..." : "استيراد الموديلات"}
-            </button>
-
-            {/* Test Model Connection */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleTestModel}
-                disabled={testingModel}
-                className="py-2 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 text-emerald-300 text-xs font-bold flex items-center gap-2 border border-emerald-500/30 transition"
-              >
-                {testingModel ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : testResult?.ok ? (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                ) : (
-                  <Zap className="w-3.5 h-3.5" />
-                )}
-                {testingModel ? "جاري اختبار الاتصال..." : "اختبار الموديل (صحة الاتصال)"}
-              </button>
-            </div>
-
-            {testResult && (
+          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div
-                className={`mt-2 px-3.5 py-2.5 rounded-xl border text-xs leading-relaxed ${
-                  testResult.ok
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
-                    : "bg-rose-500/10 border-rose-500/30 text-rose-200"
-                }`}
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black text-white shrink-0"
+                style={{ backgroundColor: AI_PROVIDERS.find((x) => x.id === aiProvider)?.color || "#6B7FE7" }}
               >
-                <div className="flex items-start gap-2">
-                  {testResult.ok ? (
-                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
-                  ) : (
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-                  )}
-                  <div>
-                    <p>{testResult.message}</p>
-                    {testResult.detail && (
-                      <p className="mt-1 font-mono text-[10px] opacity-70 break-all" dir="ltr">
-                        {testResult.detail}
-                      </p>
-                    )}
-                  </div>
-                </div>
+                {AI_PROVIDERS.find((x) => x.id === aiProvider)?.letter || "?"}
               </div>
-            )}
-          </div>
-
-          {/* Fallback Assistants Chain */}
-          <details className="pt-2 border-t border-slate-800">
-            <summary className="cursor-pointer select-none py-2.5 px-1 text-sm font-bold text-white flex items-center gap-2">
-              <Bot className="w-4 h-4 text-emerald-400" />
-              المساعدون الاحتياطيون (Fallback Chain)
-              {fallbacks.length > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px]">{fallbacks.length}</span>
-              )}
-              <span className="text-[10px] text-slate-500 font-normal mr-auto">(اضغط للفتح)</span>
-            </summary>
-            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4 mt-2">
-              <div>
-                <p className="text-[11px] text-slate-400">
-                  لو كريديت المزود الأساسي خلص أو وقف، المساعد يجرب دول تلقائياً بالترتيب — عشان مساعدك ميفضلش شغال دايماً.
-                </p>
-              </div>
-
-              {fallbacks.length > 0 && (
-                <div className="space-y-2">
-                  {fallbacks.map((fb, idx) => {
-                    const p = AI_PROVIDERS.find((x) => x.id === fb.provider);
-                    return (
-                      <div
-                        key={`${fb.provider}-${fb.model}-${idx}`}
-                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0">
-                          <span className="text-xs font-bold text-white block">
-                            {idx + 1}. {p?.label || fb.provider} — <span className="font-mono text-[10px] text-slate-400" dir="ltr">{fb.model}</span>
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-mono break-all" dir="ltr">
-                            {fb.baseUrl} · مفتاح: ••••{fb.apiKey.slice(-4)}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleRemoveFallback(idx)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
-                          title="حذف المساعد الاحتياطي"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Add fallback form */}
-              <div className="pt-3 border-t border-slate-800 space-y-2.5">
-                <span className="text-xs font-bold text-slate-300 block">إضافة مساعد احتياطي جديد</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <select
-                    value={newFbProvider}
-                    onChange={(e) => {
-                      setNewFbProvider(e.target.value);
-                      const p = AI_PROVIDERS.find((x) => x.id === e.target.value);
-                      if (p) setNewFbModel(p.model);
-                    }}
-                    className="px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500 cursor-pointer"
-                  >
-                    {AI_PROVIDERS.filter((p) => p.id !== aiProvider).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label} — {p.desc}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="password"
-                    placeholder={`مفتاح ${AI_PROVIDERS.find((p) => p.id === newFbProvider)?.label || ""}...`}
-                    value={newFbKey}
-                    onChange={(e) => setNewFbKey(e.target.value)}
-                    dir="ltr"
-                    className="px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <input
-                  type="text"
-                  placeholder="اسم الموديل (اتركه فارغ للافتراضي)"
-                  value={newFbModel}
-                  onChange={(e) => setNewFbModel(e.target.value)}
-                  dir="ltr"
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-emerald-500"
-                />
-                <button
-                  onClick={handleAddFallback}
-                  className="py-2 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs font-bold border border-emerald-500/30 transition-all cursor-pointer"
-                >
-                  + إضافة للمساعدين الاحتياطيين
-                </button>
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-white block">
+                  المزود الأساسي: {AI_PROVIDERS.find((x) => x.id === aiProvider)?.label || aiProvider}
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  {fallbacks.length > 0
+                    ? `في السلسلة: ${fallbacks.length} — ${fallbacks
+                        .map((f) => AI_PROVIDERS.find((x) => x.id === f.provider)?.label || f.provider)
+                        .join(" · ")}`
+                    : "مفيش مزودات احتياطية في السلسلة"}
+                </span>
               </div>
             </div>
-          </details>
+            <button
+              onClick={() => setActiveTab("providers")}
+              className="py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition cursor-pointer shrink-0"
+            >
+              إدارة المزودين ↗
+            </button>
+          </div>
 
           {/* Assistant Persona */}
           <details className="pt-2 border-t border-slate-800">
@@ -1425,17 +1008,10 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
-
-          <button
-            onClick={handleSaveAiSettings}
-            disabled={saving}
-            className="py-2.5 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition"
-          >
-            <Check className="w-4 h-4" />
-            حفظ إعدادات الذكاء الاصطناعي
-          </button>
         </div>
       )}
+
+      {activeTab === "providers" && isAdmin && <ProvidersTab notify={notify} />}
 
       {/* TAB 6: PERSONAL INFO */}
       {activeTab === "personal" && (
