@@ -1028,12 +1028,12 @@ export default function SettingsPage() {
             إعدادات الذكاء الاصطناعي والمحادثة
           </h2>
 
-          {/* Provider Cards */}
+          {/* Provider Cards — compact */}
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-2">
-              مزود الذكاء الاصطناعي (Provider) — اختر من الكروت
+              مزود الذكاء الاصطناعي (Provider)
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
               {AI_PROVIDERS.map((p) => (
                 <button
                   key={p.id}
@@ -1042,22 +1042,24 @@ export default function SettingsPage() {
                     setAiBaseUrl(p.baseUrl);
                     setAiModel(p.model);
                   }}
-                  className={`p-3.5 rounded-2xl border text-start transition-all cursor-pointer ${
+                  className={`px-2.5 py-2 rounded-xl border text-start transition-all cursor-pointer ${
                     aiProvider === p.id
-                      ? "bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-600/20"
+                      ? "bg-indigo-600/20 border-indigo-500 text-white"
                       : "bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-extrabold">{p.label}</span>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[13px] font-extrabold truncate">{p.label}</span>
                     {aiProvider === p.id && (
-                      <CheckCircle2 className="w-4 h-4 text-indigo-300 shrink-0" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
                     )}
                   </div>
-                  <span className="block text-[11px] opacity-70 mt-0.5">{p.desc}</span>
-                  <span className="block text-[10px] opacity-50 mt-1 font-mono break-all" dir="ltr">
-                    {p.baseUrl}
-                  </span>
+                  <span className="block text-[10px] opacity-70 mt-0.5 truncate">{p.desc}</span>
+                  {aiProvider === p.id && (
+                    <span className="block text-[9px] opacity-50 mt-0.5 font-mono truncate" dir="ltr">
+                      {p.baseUrl}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -1185,14 +1187,18 @@ export default function SettingsPage() {
           </div>
 
           {/* Fallback Assistants Chain */}
-          <div className="pt-2 border-t border-slate-800">
-            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+          <details className="pt-2 border-t border-slate-800">
+            <summary className="cursor-pointer select-none py-2.5 px-1 text-sm font-bold text-white flex items-center gap-2">
+              <Bot className="w-4 h-4 text-emerald-400" />
+              المساعدون الاحتياطيون (Fallback Chain)
+              {fallbacks.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px]">{fallbacks.length}</span>
+              )}
+              <span className="text-[10px] text-slate-500 font-normal mr-auto">(اضغط للفتح)</span>
+            </summary>
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4 mt-2">
               <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-emerald-400" />
-                  المساعدون الاحتياطيون (Fallback Chain)
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-1">
+                <p className="text-[11px] text-slate-400">
                   لو كريديت المزود الأساسي خلص أو وقف، المساعد يجرب دول تلقائياً بالترتيب — عشان مساعدك ميفضلش شغال دايماً.
                 </p>
               </div>
@@ -1271,15 +1277,16 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </details>
 
           {/* Assistant Persona */}
-          <div className="pt-2 border-t border-slate-800">
-            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Bot className="w-4 h-4 text-sky-400" />
-                شخصية المساعد (Persona)
-              </h3>
+          <details className="pt-2 border-t border-slate-800">
+            <summary className="cursor-pointer select-none py-2.5 px-1 text-sm font-bold text-white flex items-center gap-2">
+              <Bot className="w-4 h-4 text-sky-400" />
+              شخصية المساعد (Persona)
+              <span className="text-[10px] text-slate-500 font-normal mr-auto">(اضغط للفتح)</span>
+            </summary>
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3 mt-2">
               <p className="text-[11px] text-slate-400">
                 اسم المساعد وتعليماته المخصصة — تنطبق على كل العملاء (تُحقن في رسائل المساعد تلقائياً).
               </p>
@@ -1316,18 +1323,22 @@ export default function SettingsPage() {
                 حفظ شخصية المساعد
               </button>
             </div>
-          </div>
+          </details>
 
           {/* Knowledge Base (RAG) */}
-          <div className="pt-2 border-t border-slate-800">
-            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+          <details className="pt-2 border-t border-slate-800">
+            <summary className="cursor-pointer select-none py-2.5 px-1 text-sm font-bold text-white flex items-center gap-2">
+              <Tags className="w-4 h-4 text-purple-400" />
+              قاعدة المعرفة (RAG)
+              {knowledgeDocs.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px]">{knowledgeDocs.length}</span>
+              )}
+              <span className="text-[10px] text-slate-500 font-normal mr-auto">(اضغط للفتح)</span>
+            </summary>
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4 mt-2">
               <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Tags className="w-4 h-4 text-purple-400" />
-                  قاعدة المعرفة (RAG)
-                </h3>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  ارفع قواعد ونصائح و معلومات (قواعد مالية مصرية، شروط الخدمة، أسئلة شائعة...) — المساعد يسترجع المناسب تلقائياً مع كل سؤال.
+                  ارفع قواعد ونصائح ومعلومات (قواعد مالية مصرية، شروط الخدمة، أسئلة شائعة...) — المساعد يسترجع المناسب تلقائياً مع كل سؤال.
                 </p>
               </div>
 
@@ -1385,7 +1396,7 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </details>
 
           <div className="pt-2 border-t border-slate-800">
             <label className="block text-xs font-bold text-slate-300 mb-2">
