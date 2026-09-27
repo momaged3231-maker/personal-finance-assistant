@@ -326,3 +326,35 @@ VALUES
   (1, 'currency_symbol', 'ج.م'),
   (1, 'current_role', 'admin')
 ON CONFLICT (user_id, key) DO NOTHING;
+
+-- 20. Knowledge Base (قاعدة معرفة المساعد — RAG ببحث Postgres النصي المجاني)
+CREATE TABLE IF NOT EXISTS public.knowledge_docs (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  source TEXT,
+  created_by BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+CREATE TABLE IF NOT EXISTS public.knowledge_chunks (
+  id BIGSERIAL PRIMARY KEY,
+  doc_id BIGINT NOT NULL REFERENCES public.knowledge_docs(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+ALTER TABLE public.knowledge_docs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.knowledge_chunks ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tsv ON public.knowledge_chunks USING gin(content_tsv);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc ON public.knowledge_chunks(doc_id);
+
+-- 21. Long-term Memory Summaries (ملخصات متجددة لذاكرة المساعد طويلة المدى)
+CREATE TABLE IF NOT EXISTS public.ai_memory_summaries (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  summary TEXT NOT NULL,
+  up_to_message_id BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT ai_memory_summaries_user_unique UNIQUE(user_id)
+);
+ALTER TABLE public.ai_memory_summaries ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_ai_memory_summaries_user ON public.ai_memory_summaries(user_id);

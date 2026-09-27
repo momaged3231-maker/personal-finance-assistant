@@ -167,6 +167,22 @@ export default function SettingsPage() {
   const [newFbProvider, setNewFbProvider] = useState("groq");
   const [newFbKey, setNewFbKey] = useState("");
   const [newFbModel, setNewFbModel] = useState("");
+
+  // Assistant persona (admin-wide): name + custom instructions
+  const [assistantName, setAssistantName] = useState("صحبي");
+  const [assistantPersona, setAssistantPersona] = useState("");
+
+  // Knowledge base (admin): docs list + upload form
+  const [knowledgeDocs, setKnowledgeDocs] = useState<
+    Array<{ id: number; title: string; source: string | null; chunks_count?: number; created_at: string }>
+  >([]);
+  const [newKbTitle, setNewKbTitle] = useState("");
+  const [newKbContent, setNewKbContent] = useState("");
+  const [kbSaving, setKbSaving] = useState(false);
+
+  // Per-user memory notes (what the assistant knows about THIS user)
+  const [memoryNotes, setMemoryNotes] = useState("");
+  const [memorySaving, setMemorySaving] = useState(false);
   const [testingModel, setTestingModel] = useState(false);
   const [testResult, setTestResult] = useState<{
     ok: boolean;
@@ -227,6 +243,9 @@ export default function SettingsPage() {
         // ignore malformed
       }
     }
+    if (s.assistant_name) setAssistantName(s.assistant_name);
+    if (s.assistant_persona !== undefined) setAssistantPersona(s.assistant_persona);
+    if (s.assistant_memory !== undefined) setMemoryNotes(s.assistant_memory);
   }
 
   // Fetch initial settings & data
@@ -421,6 +440,24 @@ export default function SettingsPage() {
     }
   }
 
+  // Load knowledge base docs (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/knowledge");
+        if (res.ok && active) {
+          const data = await res.json();
+          if (active) setKnowledgeDocs(data.docs || []);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { active = false; };
+  }, [isAdmin]);
+
   // Fallback assistants (chain): add / remove
   function handleAddFallback() {
     const p = AI_PROVIDERS.find((x) => x.id === newFbProvider);
@@ -445,6 +482,73 @@ export default function SettingsPage() {
 
   function handleRemoveFallback(idx: number) {
     setFallbacks(fallbacks.filter((_, i) => i !== idx));
+  }
+
+  // Knowledge base (admin): save a doc + delete
+  async function handleSaveKnowledgeDoc() {
+    if (!newKbTitle.trim() || !newKbContent.trim()) {
+      notify("العنوان والمحتوى مطلوبان", "error");
+      return;
+    }
+    setKbSaving(true);
+    try {
+      const res = await fetch("/api/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newKbTitle.trim(), content: newKbContent.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "فشل الحفظ");
+      notify(`تم حفظ المستند في قاعدة المعرفة (${data.chunksCount} مقطع) — المساعد يستخدمه تلقائياً!`);
+      setNewKbTitle("");
+      setNewKbContent("");
+      const refresh = await fetch("/api/knowledge");
+      if (refresh.ok) {
+        const fresh = await refresh.json();
+        setKnowledgeDocs(fresh.docs || []);
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "فشل الحفظ", "error");
+    } finally {
+      setKbSaving(false);
+    }
+  }
+
+  async function handleDeleteKnowledgeDoc(id: number) {
+    if (!confirm("هل تريد حذف هذا المستند من قاعدة المعرفة؟")) return;
+    try {
+      const res = await fetch(`/api/knowledge?id=${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("فشل الحذف");
+      notify("تم حذف المستند");
+      setKnowledgeDocs((prev) => prev.filter((d) => d.id !== id));
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "فشل الحذف", "error");
+    }
+  }
+
+  // Save the user's memory notes (per-user, assistant remembers forever)
+  async function handleSaveMemoryNotes() {
+    setMemorySaving(true);
+    try {
+      const res = await fetch("/api/finance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_setting",
+          key: "assistant_memory",
+          value: memoryNotes.trim(),
+        }),
+      });
+      if (res.ok) {
+        notify("تم حفظ ذاكرة المساعد — هيفتكر اللي كتبته دايماً!");
+      } else {
+        notify("حدث خطأ أثناء الحفظ", "error");
+      }
+    } catch {
+      notify("حدث خطأ أثناء الحفظ", "error");
+    } finally {
+      setMemorySaving(false);
+    }
   }
 
   // Test the currently typed AI config with a real API call
@@ -1169,6 +1273,120 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* Assistant Persona */}
+          <div className="pt-2 border-t border-slate-800">
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Bot className="w-4 h-4 text-sky-400" />
+                شخصية المساعد (Persona)
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                اسم المساعد وتعليماته المخصصة — تنطبق على كل العملاء (تُحقن في رسائل المساعد تلقائياً).
+              </p>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">اسم المساعد</label>
+                <input
+                  type="text"
+                  value={assistantName}
+                  onChange={(e) => setAssistantName(e.target.value)}
+                  placeholder="صحبي"
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  تعليمات مخصصة (شخصية وأسلوب وتخصصات)
+                </label>
+                <textarea
+                  value={assistantPersona}
+                  onChange={(e) => setAssistantPersona(e.target.value)}
+                  placeholder="مثال: المساعد اسمه «صحبي» ويتكلم مصري بجدية في الأرقام ودودة في الكلام. متخصص في إدارة المرتب والعمولات. دايماً يقترح توفير 20% من المرتب..."
+                  rows={5}
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500 resize-y"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  handleSaveSetting("assistant_name", assistantName.trim() || "صحبي");
+                  handleSaveSetting("assistant_persona", assistantPersona.trim(), "تم حفظ شخصية المساعد — تنطبق على كل العملاء");
+                }}
+                disabled={saving}
+                className="py-2 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-sky-600/20 transition-all cursor-pointer"
+              >
+                حفظ شخصية المساعد
+              </button>
+            </div>
+          </div>
+
+          {/* Knowledge Base (RAG) */}
+          <div className="pt-2 border-t border-slate-800">
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Tags className="w-4 h-4 text-purple-400" />
+                  قاعدة المعرفة (RAG)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  ارفع قواعد ونصائح و معلومات (قواعد مالية مصرية، شروط الخدمة، أسئلة شائعة...) — المساعد يسترجع المناسب تلقائياً مع كل سؤال.
+                </p>
+              </div>
+
+              {knowledgeDocs.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold text-slate-400 block">
+                    المستندات ({knowledgeDocs.length})
+                  </span>
+                  {knowledgeDocs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-white block">{doc.title}</span>
+                        <span className="text-[10px] text-slate-500">
+                          {doc.chunks_count ?? 0} مقطع · {new Date(doc.created_at).toLocaleDateString("ar-EG")}
+                          {doc.source ? ` · ${doc.source}` : ""}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteKnowledgeDoc(doc.id)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                        title="حذف المستند"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                <span className="text-xs font-bold text-slate-300 block">إضافة مستند جديد</span>
+                <input
+                  type="text"
+                  placeholder="عنوان المستند (مثال: قواعد العمولة في الجمعيات)"
+                  value={newKbTitle}
+                  onChange={(e) => setNewKbTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500"
+                />
+                <textarea
+                  placeholder="المحتوى — اكتب أو الصق النص هنا (تُقسم لمقاطع تلقائياً)..."
+                  value={newKbContent}
+                  onChange={(e) => setNewKbContent(e.target.value)}
+                  rows={6}
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500 resize-y"
+                />
+                <button
+                  onClick={handleSaveKnowledgeDoc}
+                  disabled={kbSaving}
+                  className="py-2 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+                >
+                  {kbSaving ? "جارٍ الحفظ..." : "+ حفظ في قاعدة المعرفة"}
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="pt-2 border-t border-slate-800">
             <label className="block text-xs font-bold text-slate-300 mb-2">
               أسلوب رد المساعد
@@ -1280,6 +1498,33 @@ export default function SettingsPage() {
                   {personalSaving ? "جارٍ الحفظ..." : "حفظ المعلومات الشخصية"}
                 </button>
               </form>
+
+              {/* Assistant memory notes (per-user) */}
+              <div className="pt-4 border-t border-slate-800">
+                <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-indigo-400" />
+                    ذاكرة المساعد عني
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    اكتب أي حاجة عاوز المساعد يفتكرها عنك دايماً (مرتبي أول الشهر، بشرب قهوة الصبح، أهدافي...) — تُحقن في رسائله تلقائياً مع كل سؤال.
+                  </p>
+                  <textarea
+                    value={memoryNotes}
+                    onChange={(e) => setMemoryNotes(e.target.value)}
+                    rows={4}
+                    placeholder="مثال: مرتبي بيوصل أول الشهر 15 ألف. بشرب قهوة يومياً بـ 30 جنيه. بهوول على توفير 50 ألف لجهاز..."
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500 resize-y"
+                  />
+                  <button
+                    onClick={handleSaveMemoryNotes}
+                    disabled={memorySaving}
+                    className="py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                  >
+                    {memorySaving ? "جارٍ الحفظ..." : "حفظ ذاكرة المساعد"}
+                  </button>
+                </div>
+              </div>
 
               {/* Google linkage */}
               <div className="pt-4 border-t border-slate-800">

@@ -23,6 +23,7 @@ import {
   gamEyaPeriodUnitPlural,
 } from "./finance";
 import { getActiveRecurringBills, getUpcomingBills } from "./bills";
+import { searchKnowledge } from "./knowledge";
 import {
   ParsedAction,
   ParsedActionType,
@@ -185,6 +186,112 @@ export async function getConversationHistory(userId = 1, limit = 20): Promise<Ai
     .limit(limit);
   if (error) throw error;
   return ((data || []) as AiMessageRow[]).reverse();
+}
+
+// ------------------------------------------------------------------
+// Long-term memory: rolling summaries + the user's own memory notes
+// ------------------------------------------------------------------
+
+// The latest rolling summary for a user (older conversations condensed)
+export async function getLatestMemorySummary(userId: number): Promise<{ summary: string; upToMessageId: number } | null> {
+  try {
+    const client = requireSupabase();
+    const { data, error } = await client
+      .from("ai_memory_summaries")
+      .select("summary, up_to_message_id")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      summary: String(data.summary || ""),
+      upToMessageId: Number(data.up_to_message_id || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Save/replace the rolling summary for a user (one row per user)
+async function saveMemorySummary(userId: number, summary: string, upToMessageId: number): Promise<void> {
+  try {
+    const client = requireSupabase();
+    await client
+      .from("ai_memory_summaries")
+      .upsert(
+        { user_id: userId, summary, up_to_message_id: upToMessageId },
+        { onConflict: "user_id" }
+      );
+  } catch {
+    // non-fatal
+  }
+}
+
+// When enough un-summarized turns pile up (and an LLM key exists), condense
+// them into the rolling summary — big long-term memory at zero extra cost
+// per message (one background call every ~40 turns).
+async function maybeSummarizeMemory(userId: number): Promise<void> {
+  try {
+    const config = await getAiProviderConfig(userId);
+    if (!config.apiKey) return;
+    const client = requireSupabase();
+    const { data: latest } = await client
+      .from("ai_messages")
+      .select("id")
+      .eq("user_id", userId)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const latestId = Number((latest as { id?: number } | null)?.id || 0);
+    if (!latestId) return;
+    const existing = await getLatestMemorySummary(userId);
+    const unsummarizedFrom = (existing?.upToMessageId || 0) + 1;
+    if (latestId - unsummarizedFrom < 40) return;
+
+    const { data: rows } = await client
+      .from("ai_messages")
+      .select("role, content")
+      .eq("user_id", userId)
+      .gt("id", existing?.upToMessageId || 0)
+      .order("id", { ascending: true })
+      .limit(60);
+    const transcript = (rows || [])
+      .map((r: Record<string, unknown>) => `${r.role === "assistant" ? "المساعد" : "المستخدم"}: ${String(r.content || "").slice(0, 300)}`)
+      .join("\n")
+      .slice(0, 8000);
+    if (!transcript) return;
+
+    const { content } = await chatWithFallback({
+      userId,
+      messages: [
+        {
+          role: "user",
+          content:
+            "لخص المحادثة دي في نقاط قصيرة (مصري): القرارات المالية، تفضيلات المستخدم، عاداته، أي التزامات أو أهداف ذكرها، وأي معلومات مهمة عنه. خليها سياق دائم يفيد مساعد مالي يفهم صاحبه:\n\n" +
+            transcript,
+        },
+      ],
+      maxTokens: 400,
+      temperature: 0.2,
+    });
+
+    const merged = existing ? `${existing.summary}\n${content}`.slice(-4000) : content;
+    await saveMemorySummary(userId, merged, latestId);
+  } catch {
+    // Summarization is best-effort — never block the conversation
+  }
+}
+
+// The user's own memory notes (per-user settings key: assistant_memory) —
+// things they told the assistant about themselves once, remembered forever.
+export async function getUserMemoryNotes(userId: number): Promise<string> {
+  try {
+    const settings = await getSettings(userId);
+    return String(settings.assistant_memory || "").trim();
+  } catch {
+    return "";
+  }
 }
 
 // Persist a conversation turn into ai_messages (silently ignore failures)
@@ -1660,8 +1767,20 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 
   let result: AssistantResponse = localResult;
 
+  // RAG: retrieve relevant knowledge chunks for this question — used both in
+  // the LLM system prompt AND appended to the local reply when no key exists.
+  const knowledgeHits = await searchKnowledge(userPrompt, 4);
+  const knowledgeBlock = knowledgeHits.length
+    ? `\n\n📚 من قاعدة المعرفة:\n${knowledgeHits
+        .map((h: { title: string; content: string }) => `• [${h.title}] ${h.content}`)
+        .join("\n")}`
+    : "";
+
   if (!config.apiKey) {
-    // No LLM configured → keep the friendly local reply
+    // No LLM configured → keep the friendly local reply + knowledge hits
+    if (knowledgeBlock) {
+      result = { text: `${localResult.text}${knowledgeBlock}` };
+    }
   } else {
     try {
       const accounts = await getAccounts(userId);
@@ -1676,10 +1795,18 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
       const upcomingBills = await getUpcomingBills(userId, 30);
       const debtsList = await getDebts(userId);
       const goalsList = await getSavingsGoals(userId);
-      // Load previous conversation turns for memory
-      const history = await getConversationHistory(userId, 20);
+      // Load previous conversation turns for memory (wider window for big memory)
+      const history = await getConversationHistory(userId, 50);
+      // Long-term memory: rolling summary + the user's own notes
+      const memorySummary = await getLatestMemorySummary(userId);
+      const userMemoryNotes = await getUserMemoryNotes(userId);
 
-      const systemPrompt = `أنت "صحبي" — المساعد المالي الشخصي الذكي لواحد مصري ("صحبي" بدل ما ينادى "مساعدك المالي اليومي").
+      // Persona: the admin-configured name + custom instructions (admin-wide)
+      const adminSettings = await getSettings(await getAiConfigOwnerId(userId));
+      const assistantName = adminSettings.assistant_name || "صحبي";
+      const customPersona = String(adminSettings.assistant_persona || "").trim();
+
+      const systemPrompt = `أنت "${assistantName}" — المساعد المالي الشخصي الذكي لواحد مصري ("${assistantName}" بدل ما ينادى "مساعدك المالي اليومي").
 اللغة: مصري ودي وسريع وفاهم طبيعة المصاريف في مصر (القهوة، السجائر، البنزين، السوبرماركت، فودافون كاش، العمولات، المرتب).
 البيانات المالية الحالية للمستخدم مباشرة من قاعدة البيانات (PostgreSQL):
 - تاريخ اليوم: ${today.date}
@@ -1702,6 +1829,9 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
 - فواتير قادمة (30 يوم): ${upcomingBills.length ? upcomingBills.map((b) => `${b.name} ${piastresToEgp(b.amount)} (فاضل ${b.days_until_due} يوم)`).join("، ") : "لا يوجد"}
 - ديون معلقة: ${debtsList && debtsList.length ? debtsList.filter((d) => d.status === "pending").map((d) => `${d.title}: ${piastresToEgp(Math.max((Number(d.amount) || 0) - (Number(d.paid_amount) || 0), 0))}`).join("، ") : "لا يوجد"}
 - أهداف الادخار: ${goalsList && goalsList.length ? goalsList.map((g) => `${g.title} (${piastresToEgp(Number(g.current_amount) || 0)} من ${piastresToEgp(Number(g.target_amount) || 0)})`).join("، ") : "لا يوجد"}
+${memorySummary ? `- ذاكرة طويلة المدى (ملخص محادثات قديمة): ${memorySummary.summary.replace(/\n/g, " | ").slice(0, 1500)}` : ""}
+${userMemoryNotes ? `- ملاحظات المستخدم عن نفسه (ذاكرة دائمة كتبها بنفسه): ${userMemoryNotes.replace(/\n/g, " | ")}` : ""}
+${knowledgeHits.length > 0 ? `- معرفة من قاعدة المعرفة (استخدمها لو وثّقت السؤال):\n${knowledgeHits.map((h: { title: string; content: string }) => `  • [${h.title}] ${h.content.replace(/\n/g, " ")}`).join("\n")}` : ""}
 
 القواعد الإلزامية:
 1. لو المستخدم طلب تسجيل عملية مالية (مصروف / دخل / تحويل) أو إدارة مالية (دين / هدف ادخار / فاتورة دورية / حد ميزانية / حذف أو تصحيح عملية):
@@ -1761,13 +1891,10 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
       const msg = error instanceof Error ? error.message : "";
       // Detect chain-wide failure (credits/quota/bad keys) so the user knows
       // why the AI isn't reasoning
-      if (/كل المساعدين فشلوا|401|402|credits|quota|insufficient|payment|unauthorized/i.test(msg)) {
-        result = {
-          text: `${localResult.text}\n\n⚠️ ملحوظة صغيرة: كل المساعدين المهيأين خلص كريديتهم أو فيه مشكلة في المفاتيح حالياً. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`,
-        };
-      } else {
-        result = localResult;
-      }
+      const baseText = /كل المساعدين فشلوا|401|402|credits|quota|insufficient|payment|unauthorized/i.test(msg)
+        ? `${localResult.text}\n\n⚠️ ملحوظة صغيرة: كل المساعدين المهيأين خلص كريديتهم أو فيه مشكلة في المفاتيح حالياً. كل حاجة ماشية تمام على بالمساعد المحلي في أثناء كده. 💪`
+        : localResult.text;
+      result = { text: knowledgeBlock ? `${baseText}${knowledgeBlock}` : baseText };
     }
   }
 
@@ -1775,5 +1902,10 @@ export async function processAssistantMessage(userPrompt: string, userId = 1): P
   if (result.text) {
     await saveAiMessage(userId, "assistant", result.text);
   }
+
+  // Big long-term memory: condense piled-up turns into the rolling summary
+  // (best-effort, runs rarely — only every ~40 turns and only with a key)
+  await maybeSummarizeMemory(userId).catch(() => {});
+
   return result;
 }
