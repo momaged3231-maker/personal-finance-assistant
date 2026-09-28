@@ -261,6 +261,7 @@ export default function ProvidersTab({
 
   const connectedCount = AI_PROVIDERS.filter(isConnected).length;
   const freeTotal = AI_PROVIDERS.filter((p) => p.group === "free").length;
+  const creditTotal = AI_PROVIDERS.filter((p) => p.group === "credit").length;
   const paidTotal = AI_PROVIDERS.filter((p) => p.group === "paid").length;
   const q = search.trim().toLowerCase();
   const filtered = AI_PROVIDERS.filter((p) => {
@@ -268,12 +269,18 @@ export default function ProvidersTab({
     if (q && !p.label.toLowerCase().includes(q) && !p.desc.toLowerCase().includes(q)) return false;
     return true;
   });
-  const groups: Array<{ id: "free" | "paid"; title: string; sub: string; list: AiProvider[] }> = [
+  const groups: Array<{ id: "free" | "credit" | "paid"; title: string; sub: string; list: AiProvider[] }> = [
     {
       id: "free",
       title: "مزودات مجانية (Free Tier)",
-      sub: "حصص مجانية — بعضها يحتاج مفتاح مجاني بدون بطاقة، والباقي يشتغل من غير مفاتيح.",
+      sub: "حصص مجانية متجددة — بعضها يحتاج مفتاحاً مجانياً بدون بطاقة.",
       list: filtered.filter((p) => p.group === "free"),
+    },
+    {
+      id: "credit",
+      title: "كريدت ترحيبي (يتطلب بطاقة)",
+      sub: "كريدت لمرة واحدة عند التسجيل — بعد نفاده دفع.",
+      list: filtered.filter((p) => p.group === "credit"),
     },
     {
       id: "paid",
@@ -288,6 +295,7 @@ export default function ProvidersTab({
     { label: "المتصل", count: connectedCount, cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400" },
     { label: "في السلسلة", count: fallbacks.length, cls: "bg-amber-500/15 text-amber-300 border-amber-500/30", dot: "bg-amber-400" },
     { label: "مجاني", count: freeTotal, cls: "bg-sky-500/15 text-sky-300 border-sky-500/30", dot: "bg-sky-400" },
+    { label: "كريدت", count: creditTotal, cls: "bg-violet-500/15 text-violet-300 border-violet-500/30", dot: "bg-violet-400" },
     { label: "مدفوع", count: paidTotal, cls: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400" },
   ];
 
@@ -333,6 +341,16 @@ export default function ProvidersTab({
               {connected ? "متصل ✅" : "بدون اتصال"}
             </span>
             <span className="block text-[10px] text-slate-500 truncate">{p.desc}</span>
+            {p.tos && (
+              <span
+                title={p.tosNote}
+                className={`mt-1 inline-block px-1.5 py-0.5 rounded-md text-[9px] font-bold ${
+                  p.tos === "ok" ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
+                }`}
+              >
+                {p.tos === "ok" ? "شروط: مسموحة" : "شروط: تحقق ⚠"}
+              </span>
+            )}
           </div>
           <div
             className="flex flex-col items-end gap-1.5 shrink-0"
@@ -553,7 +571,9 @@ export default function ProvidersTab({
                       className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                         g.id === "free"
                           ? "bg-sky-500/20 text-sky-300"
-                          : "bg-orange-500/20 text-orange-300"
+                          : g.id === "credit"
+                            ? "bg-violet-500/20 text-violet-300"
+                            : "bg-orange-500/20 text-orange-300"
                       }`}
                     >
                       {g.list.filter(isConnected).length}/{g.list.length} متصل
